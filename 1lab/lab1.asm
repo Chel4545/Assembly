@@ -1,9 +1,9 @@
 section .rodata
     a dd 1
-    b dw 0
-    c dd 100000
-    d dw -32766
-    e dd 32767
+    b dw -1
+    c dd 5
+    d dw 4
+    e dd 1
 
 section .data
     result dq 0
@@ -13,75 +13,63 @@ section .text
     global _start
 
 _start:
-    mov   r8d,       [a]
-    movsx r9d,  word [b]
-    mov   r10d,      [c]
-    movsx r11d, word [d]
-    mov   r12d,      [e]
+    mov  r8d,  dword [a]
+    mov  r9w,  word  [b]
+    mov  r10d, dword [c]
+    mov  r11w, word  [d]
+    mov  r12d, dword [e]
 
     ;(e-b)
-    movsx r12, r12d
-    movsx r9, r9d
-    sub r12, r9
-    mov r13, r12
-;Komar_sosy
+    movsxd rax, r12d
+    movsx rcx, r9w
+    sub rax, rcx
+    mov r13, rax
 
     ;(e+d)
-    movsx r12, r12d
-    movsx r11, r11d
-    add r12, r11
-    mov r14, r12
+    movsxd rax, r12d
+    movsx rcx, r11w
+    add rax, rcx
+    mov r14, rax
+
+    ;c / (e+d)
+    test r14, r14
+    jz zero_division
+
+    movsxd rax, r10d
+    cqo
+    idiv r14
+    mov r14, rax
 
     ;(d+b)
-    mov r15d, r9d
-    add r15d, r11d
+    movsx eax, r11w
+    movsx ecx, r9w
+    add eax, ecx
+    mov r15d, eax
 
-    
     ;(d+b) / e
-    movsx rax, r15d
-    movsx r12, r12d
-    ;mov ecx, r12d
-
-    test r12, r12 ; and побитово без записи как в xor
+    test r12d, r12d
     jz zero_division
 
-    cdq
-    idiv rax
-    mov r12, rax
+    movsxd rax, r15d
+    movsxd rcx, r12d
+    cqo
+    idiv rcx
+    mov r15, rax
 
-    ; с / (e+d)
-    mov eax, r10d
-    mov ecx, r14d
-
-    test ecx, ecx 
-    jz zero_division
-
-    cdq;для расширени
-    idiv ecx
-    mov r14d, eax
-
-    ;(e-b) * c/(e+d)
-    mov eax, r13d
-    mov ecx, r14d
-    imul eax, ecx
+    ;a * (e-b)
+    movsxd rax, r8d
+    imul rax, r13
     jo overflow
-    mov r14d, eax
 
-    ;a * (e-b)*c/(e+d)
-    mov eax, r8d
-    mov ecx, r14d
-    imul eax, ecx
+    ;a*(e-b) * (c/(e+d))
+    imul rax, r14
     jo overflow
-    mov r14d, eax
 
-    ;a*(e-b)*c/(e+d) - (d+b)/e
-    mov eax, r14d
-    mov ecx, r12d
-    sub eax, ecx
-    jo overflow 
-    mov r12d, eax
+    ;a*(e-b)*(c/(e+d)) - ((d+b)/e)
+    sub rax, r15
+    jo overflow
 
-    mov [result], r12d
+    mov [result], rax
 
     jmp ok
 
