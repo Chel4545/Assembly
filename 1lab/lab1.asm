@@ -59,7 +59,7 @@ _start:
     ;a * (e-b)
     movsxd rax, r8d
     imul rax, r13
-    jo overflow
+    ;не выйдет ли за пределы 64 бит
 
     ;a*(e-b) * (c/(e+d))
     imul rax, r14
