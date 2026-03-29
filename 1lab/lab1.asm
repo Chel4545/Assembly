@@ -1,9 +1,9 @@
 section .rodata
-    a dd 1
-    b dw -1
-    c dd 5
-    d dw 4
-    e dd 1
+    a dd 2147483647
+    b dw -32768
+    c dd 2147483647
+    d dw 32616
+    e dd 1038
 
 section .data
     result dq 0

@@ -4,18 +4,17 @@
 
 section .data
 matrix_rows:
-    db 3 ;строки
+    db 5 ;строки
 
 matrix_col:
-    db 3 ;столбцы
+    db 5 ;столбцы
 
 matrix:
-    dw 1, 2, 3
-    dw 4, 5, 6
-    dw 7, 8, 9
-
-sort_dir:
-    db SORT_DIR ; направление сортировки (0 - возрастание, 1 - убавание)
+    dw 1, 4096, 581, -16, 14
+    dw 1, 500, 417, -1, 0
+    dw 0, 0,   0,    0, 0
+    dw 9, 15, 16,   17, 18
+    dw -100, -100, -100, -100, -100
 
 section .bss
     tmp: resw 255*255
@@ -80,19 +79,18 @@ sort_sum:
 
             ; A[j-1] > x
             mov edx, dword [r8 + r11*4 - 4]
-            cmp byte [sort_dir], 0
-            je .increase
-            jne .decrease
 
-            .decrease:
+            %if SORT_DIR = 0
+                cmp edx, r12d
+                jle .insert
+                jmp .shift
+
+            %else
                 cmp edx, r12d
                 jge .insert
                 jmp .shift
 
-            .increase:
-                cmp edx, r12d
-                jle .insert
-                jmp .shift
+            %endif
             
             .shift:
             ; A[j] = A[j-1]
