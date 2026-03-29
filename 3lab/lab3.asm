@@ -5,10 +5,13 @@ section .rodata
 ;section .data
 
 section .bss
-    buffer          resb 128
+    buffer          resb 8
+    buffer_len      resb 1
+    steck_old       resb 8
+    steck_new       resb 8
     file_name       resb 128
 
-    single_word     resb 128
+    single_word     resb 256
     single_word_len resb 1
 
     file_descriptor resq 1
@@ -19,12 +22,13 @@ section .text
 
 _start:
     call menu
-    call string
+    ;call string
     jmp ok
 
 menu:
     call output_console_message
     call input_console_string
+    mov rsp, [steck_new]
     test rax, rax
     jz ok
     call make_file_name
@@ -132,13 +136,56 @@ output_console_message:
     ret
 
 input_console_string:
-    mov rax, 0         
-    mov rdi, 0          
-    mov rsi, buffer
-    mov rdx, 128
-    syscall
-    mov [input_length], rax  ; сохраняем реальную длину введенных данных
-    ret
+    lea rdi, [buffer]
+    xor rcx, rcx
+    mov [steck_old], rsp
+
+    .read_loop:
+        mov rax, 0
+        mov rsi, rdi
+        mov rdx, 8
+        xor rdi, rdi
+        syscall
+        mov rdi, rsi
+
+        test rax, rax
+        jz .end
+
+        xor r8, r8
+
+    .find_newline:
+        cmp r8, rax
+        jge .no_newline_in_block
+
+        mov al, [rdi + r8]
+        cmp al, 0x0a
+        je .found_newline_at_pos
+
+        inc r8
+        jmp .find_newline
+
+    .found_newline_at_pos:
+        push rdi
+        add byte [buffer_len], 1
+        add rcx, r8
+        add rcx, 1
+        mov [input_length], rcx
+        jmp .done
+
+    .no_newline_in_block:
+        push rdi
+        add byte [buffer_len], 1
+        add rcx, rax
+        jmp .read_loop
+
+    .end:
+        mov [input_length], rcx
+        mov rax, rcx
+
+    .done:
+        mov [steck_new], rsp
+        mov rsp, [steck_old]
+        ret
 
 make_file:
     mov rax, 2          
@@ -147,6 +194,12 @@ make_file:
     mov rdx, 0777    ; права доступа  
     syscall
     mov [file_descriptor], rax  ; дескриптор файла
+    ret
+
+close_file:
+    mov rax, 3
+    mov rdi, [file_descriptor]
+    syscall
     ret
 
 make_file_name:
