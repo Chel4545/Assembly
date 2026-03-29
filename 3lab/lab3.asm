@@ -1,14 +1,14 @@
 section .rodata
     message_file db 'Input file: '
-    msg_len_file equ $ - message_file  
+    msg_len_file equ $ - message_file
+    newline db 0x0a  
 
 ;section .data
 
 section .bss
     buffer          resb 8
     buffer_len      resb 1
-    steck_old       resb 8
-    steck_new       resb 8
+
     file_name       resb 128
 
     single_word     resb 256
@@ -21,209 +21,232 @@ section .text
     global _start
 
 _start:
-    call menu
-    ;call string
-    jmp ok
+    jmp menu
+	.after_menu:
+    jmp string
 
 menu:
-    call output_console_message
-    call input_console_string
-    mov rsp, [steck_new]
+    jmp output_console_message
+	.after_output:
+    jmp input_console_file_name
+	.after_input_file_name:
     test rax, rax
     jz ok
-    call make_file_name
-    call make_file
-    ret
+    jmp make_file
+	.after_make_file:
+    jmp _start.after_menu
 
 string:
-    .while:
-        call input_console_string
-        cmp rax, 0
-        je .end_while
+	.while:
+    jmp input_console_string
+	.after_input_string:
+    cmp rax, 0
+    je .end_while
 
-        call check_palindrome
-        jmp .while
+    jmp check_palindrome
+	.after_check_p:
 
-    .end_while:
-    ret
+	.end_while:
+    jmp string.after_check_p
 
 check_palindrome:
-    xor r9, r9 ; индекс символа в буфере
-    .while:
-        cmp r9, [input_length]
-        jge .end_while
+    mov r9, [buffer_len]
+    imul r9, 8
+    mov r10, rsp
+    sub r10, r9 ; r10 - начало строки
 
-        call get_word
-        call check_single_word_palindrome
-        cmp rax, 0
-        jne .skip_write
-        call write_file
-        .skip_write:
-        jmp .while
+    xor r8, r8
 
-    .end_while:
-    ret
+    .while_start_tab:
+        cmp r8, [input_length]
+        jae .end_check_start_tab
+        mov al, [r10 + r8]
+        cmp al, 0x20          
+        je .inc_left
+        cmp al, 0x09   
+        je .inc_left
+        jmp .end_check_start_tab
 
-check_single_word_palindrome:
-    movzx rcx, byte [single_word_len]
-    mov rbx, rcx
-    shr rcx, 1              ; rcx = length / 2
-    xor r8b, r8b
-    .while:
-        cmp r8b, cl
-        jge .end_while_success
+    .inc_left:
+        inc r8
+        jmp .while_start_tab
 
-        mov al, [single_word + r8]
 
-        sub rbx, r8
-        dec rbx              ; rbx = length - r8 - 1
-        mov bl, [single_word + rbx]
+    .end_check_start_tab:
 
-        cmp al, bl
+	.while:
+		cmp r8, [input_length]
+		jae .end_check
 
-        jne .end_while_failure
-        inc r8b
-        jmp .while
+		; найти конец слова
+		mov r12, r8
+	    .find_word_end:
+			cmp r12, [input_length]
+			jae .word_end_found
+			mov al, [r10 + r12]
+			cmp al, 0x20
+			je .word_end_found
+			cmp al, 0x09
+			je .word_end_found
+			inc r12
+			jmp .find_word_end
 
-    .end_while_success:
-        xor rax, rax
-        ret
-    .end_while_failure:
-        mov rax, 1
-        ret
+	.word_end_found:
+		; проверить палиндром слова
+		mov r13, r8
+		mov r15, r12
+		dec r15
 
-get_word: ; r9 - индекс текущего символа
+	.check_word:
+			cmp r13, r15
+			jge .is_palindrome
 
-    lea rsi, [buffer + r9*1]    
-    lea rdi, [single_word] 
-    xor rcx, rcx
+			mov al, [r10 + r13]
+			mov bl, [r10 + r15]
+			cmp al, bl
+			jne .not_palindrome
 
-    .while:
-        mov al, [rsi]
+			inc r13
+			dec r15
+			jmp .check_word
 
-        cmp al, 0x20 ; ' '
-            je .end_while
-        cmp al, 0x9  ; '\t'
-            je .end_while
-        cmp al, 0x0a ; '\n'
-            je .end_while
-        cmp al, 0x00 ; '\0'
-            je .end_while
+	.is_palindrome:
+		jmp write_file
+	.after_write:
+		; пропустить пробелы после слова
+		mov r8, r12
+	.skip_spaces:
+			cmp r8, [input_length]
+			jae .while
+			mov al, [r10 + r8]
+			cmp al, 0x20
+			je .is_space
+			cmp al, 0x09
+			je .is_space
+			jmp .while
+	.is_space:
+			inc r8
+			jmp .skip_spaces
 
-        mov [rdi], al
-        inc rsi
-        inc rdi
-        inc rcx
-        jmp .while
+	.not_palindrome:
+		; пропустить пробелы после слова
+		mov r8, r12
+	.skip_spaces_not:
+			cmp r8, [input_length]
+			jae .while
+			mov al, [r10 + r8]
+			cmp al, 0x20
+			je .is_space_not
+			cmp al, 0x09
+			je .is_space_not
+			jmp .while
+	.is_space_not:
+			inc r8
+			jmp .skip_spaces_not
 
-    .end_while:
-    cmp rcx, 0
-    je .no_word
-    mov r9, rsi
-    sub r9, buffer
-    mov [single_word_len], cl
-    ret
-    .no_word:
-    inc r9
-    ret
+	.end_check:
+		jmp string.after_check_p
+
 
 output_console_message:
-    mov rax, 1         
-    mov rdi, 1          
-    mov rsi, message_file 
-    mov rdx, msg_len_file 
+    mov rax, 1
+    mov rdi, 1
+    mov rsi, message_file
+    mov rdx, msg_len_file
     syscall
-    ret
+    jmp menu.after_output
+
+input_console_file_name:
+    mov rax, 0
+    mov rdi, 0
+    mov rsi, file_name
+    mov rdx, 128
+    syscall
+    jmp menu.after_input_file_name
 
 input_console_string:
-    lea rdi, [buffer]
+    lea r8, [buffer]
     xor rcx, rcx
-    mov [steck_old], rsp
 
-    .read_loop:
+	.read_loop:
         mov rax, 0
-        mov rsi, rdi
+        mov rdi, 0
+        mov rsi, r8
         mov rdx, 8
-        xor rdi, rdi
         syscall
-        mov rdi, rsi
 
         test rax, rax
         jz .end
 
-        xor r8, r8
+        xor r9, r9
 
-    .find_newline:
-        cmp r8, rax
-        jge .no_newline_in_block
+	    .find_newline:
+            cmp r9, rax
+            jge .no_newline_in_block
 
-        mov al, [rdi + r8]
-        cmp al, 0x0a
-        je .found_newline_at_pos
+            mov al, [r8 + r9]
+            cmp al, 0x0a
+            je .found_newline_at_pos
 
-        inc r8
+            inc r9
         jmp .find_newline
 
-    .found_newline_at_pos:
-        push rdi
-        add byte [buffer_len], 1
-        add rcx, r8
-        add rcx, 1
-        mov [input_length], rcx
-        jmp .done
+	    .found_newline_at_pos:
+            add byte [buffer_len], 1
+            add rcx, r9
+            add rcx, 1
+            mov [input_length], rcx
+            jmp .done
 
-    .no_newline_in_block:
-        push rdi
-        add byte [buffer_len], 1
-        add rcx, rax
-        jmp .read_loop
+        .no_newline_in_block:
+            add byte [buffer_len], 1
+            add rcx, rax
+            add r8, 8
+            jmp .read_loop
 
     .end:
-        mov [input_length], rcx
-        mov rax, rcx
+    mov [input_length], rcx
 
     .done:
-        mov [steck_new], rsp
-        mov rsp, [steck_old]
-        ret
+    jmp string.after_input_string
 
 make_file:
-    mov rax, 2          
-    mov rdi, file_name         
-    mov rsi, 0x242   ; флаг(инфа ядру)  
-    mov rdx, 0777    ; права доступа  
+    mov rax, 2
+    mov rdi, file_name
+    mov rsi, 0x242
+    mov rdx, 0777
     syscall
-    mov [file_descriptor], rax  ; дескриптор файла
-    ret
+    mov [file_descriptor], rax
+    jmp menu.after_make_file
 
 close_file:
     mov rax, 3
     mov rdi, [file_descriptor]
     syscall
-    ret
-
-make_file_name:
-    lea rsi, [buffer]    
-    lea rdi, [file_name] 
-    xor rcx, rcx        
-
-    copy_loop:
-        mov al, [rsi]
-        mov [rdi], al
-        inc rsi
-        inc rdi
-        test al, al
-        jnz copy_loop
-    
-    ret
+    jmp menu.after_make_file
 
 write_file:
-    mov rax, 1          
-    mov rdi, [file_descriptor]
-    mov rsi, buffer
-    mov rdx, [input_length]
-    syscall
-    ret
+    ; r8 - начало слова, r12 - конец слова, r10 - начало буфера
+    mov r9, r8
+	.write_loop:
+		cmp r9, r12
+		jae .write_done
+		mov rax, 1
+		mov rdi, [file_descriptor]
+		lea rsi, [r10 + r9]
+		mov rdx, 1
+		syscall
+		inc r9
+		jmp .write_loop
+
+	.write_done:
+		; добавить новую строку
+		mov rax, 1
+		mov rdi, [file_descriptor]
+		lea rsi, [newline]
+		mov rdx, 1
+		syscall
+		jmp check_palindrome.after_write
 
 
 ;системные вызовы для выхода
