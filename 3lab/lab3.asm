@@ -1,74 +1,78 @@
 section .rodata
     message_file db 'Input file: '
     msg_len_file equ $ - message_file
-    newline db 0x0a
 
 section .bss
-    buffer          resb 8
+    input_buffer    resb 256
+    len_input       resq 1
+
+    output_buffer   resb 256
+    len_output      resq 1
 
     file_name       resb 128
-
-    single_word     resb 256
-    single_word_len resb 1
-
     file_descriptor resq 1
-    input_length    resq 1
-    stack_base      resq 1
 
 section .text
     global _start
 
 _start:
-    jmp menu
-    .after_menu:
-        jmp string
-    .after_string:
-        jmp ok
+    call menu
+    call input_console_string
+    call close_file
+    jmp ok
 
 menu:
-    jmp output_console_message
-    .after_output:
-        jmp input_console_file_name
-    .after_input_file_name:
-        test rax, rax
-        jz ok
-        jmp make_file
-    .after_make_file:
-        jmp _start.after_menu
+    push rbp
+    mov  rbp, rsp
 
-string:
-.while:
-    jmp input_console_string
-    .after_input_string:
-        cmp rax, 0
-        je .end_while
+    call output_console_message
+    call input_console_file_name
 
-        jmp check_palindrome
-    .after_check_p:
-        mov rax, [input_length]
-        add rsp, rax
-        jmp string.while
+    test rax, rax
+    jz ok
 
-    .end_while:
-        jmp _start.after_string
+    call make_file
+    
+    mov rsp, rbp
+    pop rbp
+    ret
 
 check_palindrome:
-    xor r8, r8                    ; r8 = текущая позиция в строке
-    
+    push rbp
+    mov  rbp, rsp
+
+    push rax
+    push rbx
+    push rcx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+
+    mov r11, input_buffer         ; r11 = адрес начала буфера для чтения
+    mov r12, output_buffer        ; r12 = адрес начала буфера для записи
+    xor r8, r8                    ; r8 = начало строки
+    xor r13, r13                  ; текущая длина output_buffer
+    mov qword [len_output], 0
+
     .skip_delims:
-        cmp r8, [input_length]
-        jae .end_check
+        cmp r8, [len_input]
+        jae .end_check_default
 
         ; al = строка[r8]
-        mov r10, [input_length]
-        dec r10
-        sub r10, r8
-        mov r11, [stack_base]
-        mov al, [r11 + r10]
+        mov al, [r11 + r8]
 
         cmp al, 0x20                  ; space
         je .inc_skip
         cmp al, 0x09                  ; tab
+        je .inc_skip
+        cmp al, 0x0A
+        je .inc_skip
+        cmp al, 0x0D
         je .inc_skip
         jmp .word_start_found
 
@@ -77,179 +81,295 @@ check_palindrome:
         jmp .skip_delims
 
     .word_start_found:
-        mov r12, r8                   ; r12 = конец слова
+        mov rbx, r8                   ; rbx = начало слова
+        mov r9, r8                    ; r9 = конец строки
 
-    .find_word_end:
-        cmp r12, [input_length]
-        jae .word_end_found
+        .find_delims:
+            cmp r9, [len_input]
+            jz .border_buffer ; строка закончилась не на пробел, проверить через доп буфер
 
-        mov r10, [input_length]
-        dec r10
-        sub r10, r12
-        mov r11, [stack_base]
-        mov al, [r11 + r10]
+            ; al = строка[r8]
+            mov al, [r11 + r9]
 
-        cmp al, 0x20
-        je .word_end_found
-        cmp al, 0x09
-        je .word_end_found
+            cmp al, 0x20                  ; space
+            je .check_word
+            cmp al, 0x09                  ; tab
+            je .check_word
+            cmp al, 0x0A
+            je .check_word
+            cmp al, 0x0D
+            je .check_word
 
-        inc r12
-        jmp .find_word_end
-
-    .word_end_found:
-        mov r13, r8
-        mov r15, r12
-        dec r15
-
+            inc r9
+        jmp .find_delims
+        
     .check_word:
-        cmp r13, r15
-        jge .is_palindrome
+        mov r10, r9
+        dec r9
 
-        mov r10, [input_length]
-        dec r10
-        sub r10, r13
-        mov r11, [stack_base]
-        mov dl, [r11 + r10]
+        .loop_check:
+            cmp r8, r9
+            jge .is_palindrome
 
-        mov r10, [input_length]
-        dec r10
-        sub r10, r15
-        mov r11, [stack_base]
-        mov al, [r11 + r10]
+            ; al =строка[r8]
+            mov al, [r11 + r8]
 
-        cmp dl, al
-        jne .not_palindrome
+            ; dl = строка[r10]
+            mov dl, [r11 + r9]
 
-        inc r13
-        dec r15
-        jmp .check_word
+            cmp al, dl
+            jne .not_palindrome
+
+            inc r8
+            dec r9
+        jmp .loop_check
+
+    .border_buffer:
+        ;копируем часть слова в входной буфер
+        mov rcx, r9
+        sub rcx, r8
+        mov rax, rcx                   ; сохранить длину
+
+        lea rsi, [r11 + r8] ; от куда
+        lea rdi, [r11]      ; куда
+
+        cld                 ; направление копирования - вперед
+        rep movsb           ; копируем строку rsi++ rdi++ rcx--
+
+        mov [len_input], rax
+
+        jmp .finish_check
 
     .is_palindrome:
-        jmp write_file
-    .after_write:
-        mov r8, r12
-        jmp .skip_delims
+        ; длина слова = r10 - rbx
+        mov rcx, r10
+        sub rcx, rbx
+        mov rax, rcx 
 
+        lea rsi, [r11 + rbx]      ; от куда
+        lea rdi, [r12 + r13]      ; куда
+
+        cld                 ; направление копирования - вперед
+        rep movsb           ; копируем строку rsi++ rdi++ rcx--
+
+        add r13, rax
+        mov byte [r12 + r13], 0x0A     ; перевод строки после палиндрома
+        inc r13
+
+        mov [len_output], r13
+
+        mov r8, r10
+        jmp .skip_delims
+    
     .not_palindrome:
-        mov r8, r12
+        mov r8, r10
         jmp .skip_delims
 
-    .end_check:
-        jmp string.after_check_p
+    .end_check_default:
+        mov qword [len_input], 0
+
+    .finish_check:
+
+        pop r13
+        pop r12
+        pop r11
+        pop r10
+        pop r9
+        pop r8
+        pop rdi
+        pop rsi
+        pop rcx
+        pop rbx
+        pop rax
+
+        mov rsp, rbp
+        pop rbp
+        ret
+    
+
 
 output_console_message:
+    push rbp
+    mov  rbp, rsp
+
+    push rdi
+    push rsi
+    push rdx
+
     mov rax, 1
     mov rdi, 1
     mov rsi, message_file
     mov rdx, msg_len_file
     syscall
-    jmp menu.after_output
+
+    pop rdx
+    pop rsi
+    pop rdi
+    
+    mov rsp, rbp
+    pop rbp
+    ret
 
 input_console_file_name:
+    push rbp
+    mov  rbp, rsp
+
+    push rcx
+    push rdi
+    push rsi
+    push rdx
+
     mov rax, 0
     mov rdi, 0
     mov rsi, file_name
     mov rdx, 128
     syscall
-    jmp menu.after_input_file_name
+
+    test rax, rax
+    jle .done
+
+    mov rcx, rax
+    dec rcx
+
+    cmp byte [file_name + rcx], 0x0A
+    jne .no_lf
+
+    mov byte [file_name + rcx], 0
+    jmp .done
+
+.no_lf:
+    cmp rax, 127
+    ja .done
+    mov byte [file_name + rax], 0
+
+.done:
+    pop rdx
+    pop rsi
+    pop rdi
+    pop rcx
+
+    mov rsp, rbp
+    pop rbp
+    ret
     
 
 input_console_string:
-    mov qword [input_length], 0
+    push rbp
+    mov  rbp, rsp
+
+    push rdi
+    push rsi
+    push rdx
+
+    mov qword [len_input], 0
 
     .read_loop:
+        mov rsi, input_buffer
+        mov rdx, 256
+
+        mov rax, [len_input]
+        add rsi, rax
+        sub rdx, rax
+
         mov rax, 0
         mov rdi, 0
-        mov rsi, buffer
-        mov rdx, 8
         syscall
 
         test rax, rax
         jz .eof
+        js error
 
-        xor r9, r9
+        add qword [len_input], rax
 
-    .process_block:
-        cmp r9, rax
-        jae .read_loop
+        call check_palindrome
+        cmp qword [len_output], 0
+        jz .read_loop
 
-        mov bl, [buffer + r9]
-        cmp bl, 0x0a
-        je .line_done
-
-        sub rsp, 1
-        mov [rsp], bl
-        inc qword [input_length]
-
-        inc r9
-        jmp .process_block
-
-    .line_done:
-        mov [stack_base], rsp
-        mov rax, 1
-        jmp .done
+        call write_file
+        jmp .read_loop
+    jmp .read_loop
 
     .eof:
-        cmp qword [input_length], 0
-        je .no_data
+        cmp qword [len_input], 0
+        jz .done
 
-        mov [stack_base], rsp
-        mov rax, 1
-        jmp .done
-
-    .no_data:
-        xor rax, rax
+        call check_palindrome
+        cmp qword [len_output], 0
+        jz .done
+        call write_file
 
     .done:
-        jmp string.after_input_string
+
+        mov rax, 1
+
+        pop rdx
+        pop rsi
+        pop rdi
+
+        mov rsp, rbp
+        pop rbp
+        ret
 
 make_file:
+    push rbp
+    mov  rbp, rsp
+
+    push rdi
+    push rsi
+    push rdx
+
     mov rax, 2
     mov rdi, file_name
     mov rsi, 0x242
     mov rdx, 0777
     syscall
     mov [file_descriptor], rax
-    jmp menu.after_make_file
 
-close_file:
+    pop rdx
+    pop rsi
+    pop rdi
+    
+    mov rsp, rbp
+    pop rbp
+    ret
+
+close_file: ; в rax - 0 успех, -1 ошибки
+    push rbp
+    mov  rbp, rsp
+
+    push rdi
+
     mov rax, 3
     mov rdi, [file_descriptor]
     syscall
-    jmp menu.after_make_file
 
-write_file:
-    ; r8 - начало слова, r12 - конец слова, r10 - начало буфера
-    mov r9, r8
+    pop rdi
 
-    .write_loop:
-        cmp r9, r12
-        jae .write_done
+    mov rsp, rbp
+    pop rbp
+    ret
 
-        mov r10, [input_length]
-        dec r10
-        sub r10, r9
-        mov r11, [stack_base]
-        add r11, r10
+write_file: ; return rax - кол-во записанных байт (-1 в случае ошибки)
+    push rbp
+    mov  rbp, rsp
 
-        mov rax, 1
-        mov rdi, [file_descriptor]
-        mov rsi, r11
-        mov rdx, 1
-        syscall
+    push rdi
+    push rsi
+    push rdx
 
-        inc r9
-        jmp .write_loop
+    mov rax, 1
+    mov rdi, [file_descriptor]
+    mov rsi, output_buffer
+    mov rdx, [len_output]
+    syscall
 
-    .write_done:
-        mov rax, 1
-        mov rdi, [file_descriptor]
-        mov rsi, newline
-        mov rdx, 1
-        syscall
+    pop rdx
+    pop rsi
+    pop rdi
 
-        jmp check_palindrome.after_write
+    mov rsp, rbp
+    pop rbp
+    ret
 
 ok:
     mov rax, 60
