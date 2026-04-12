@@ -1,15 +1,34 @@
+INPUT_BUF_SIZE  equ 256
+OUTPUT_BUF_SIZE equ 256
+FILE_NAME_SIZE  equ 128
+
+SYS_READ  equ 0
+SYS_WRITE equ 1
+SYS_OPEN  equ 2
+SYS_CLOSE equ 3
+SYS_EXIT  equ 60
+
+STDIN  equ 0
+STDOUT equ 1
+
+SPACE equ 0x20
+TAB   equ 0x09
+LF    equ 0x0A
+CR    equ 0x0D
+ZR    equ 0x00
+
 section .rodata
     message_file db 'Input file: '
     msg_len_file equ $ - message_file
 
 section .bss
-    input_buffer    resb 256
+    input_buffer    resb INPUT_BUF_SIZE
     len_input       resq 1
 
-    output_buffer   resb 256
+    output_buffer   resb OUTPUT_BUF_SIZE
     len_output      resq 1
 
-    file_name       resb 128
+    file_name       resb FILE_NAME_SIZE
     file_descriptor resq 1
 
 section .text
@@ -66,17 +85,24 @@ check_palindrome:
         ; al = строка[r8]
         mov al, [r11 + r8]
 
-        cmp al, 0x20                  ; space
+        cmp al, SPACE                  ; space
         je .inc_skip
-        cmp al, 0x09                  ; tab
+        cmp al, TAB                    ; tab
         je .inc_skip
-        cmp al, 0x0A
-        je .inc_skip
-        cmp al, 0x0D
-        je .inc_skip
+        cmp al, LF
+        je .LFCR_skip
+        cmp al, CR
+        je .LFCR_skip
         jmp .word_start_found
 
     .inc_skip:
+        inc r8
+        jmp .skip_delims
+
+    .LFCR_skip:
+        mov [output_buffer + r13], al
+        inc r13
+        mov [len_output], r13
         inc r8
         jmp .skip_delims
 
@@ -91,13 +117,13 @@ check_palindrome:
             ; al = строка[r8]
             mov al, [r11 + r9]
 
-            cmp al, 0x20                  ; space
+            cmp al, SPACE                  ; space
             je .check_word
-            cmp al, 0x09                  ; tab
+            cmp al, TAB                  ; tab
             je .check_word
-            cmp al, 0x0A
+            cmp al, LF
             je .check_word
-            cmp al, 0x0D
+            cmp al, CR
             je .check_word
 
             inc r9
@@ -142,6 +168,7 @@ check_palindrome:
 
     .is_palindrome:
         ; длина слова = r10 - rbx
+        inc r10
         mov rcx, r10
         sub rcx, rbx
         mov rax, rcx 
@@ -153,8 +180,6 @@ check_palindrome:
         rep movsb           ; копируем строку rsi++ rdi++ rcx--
 
         add r13, rax
-        mov byte [r12 + r13], 0x0A     ; перевод строки после палиндрома
-        inc r13
 
         mov [len_output], r13
 
@@ -196,8 +221,8 @@ output_console_message:
     push rsi
     push rdx
 
-    mov rax, 1
-    mov rdi, 1
+    mov rax, SYS_WRITE
+    mov rdi, STDOUT
     mov rsi, message_file
     mov rdx, msg_len_file
     syscall
@@ -219,10 +244,10 @@ input_console_file_name:
     push rsi
     push rdx
 
-    mov rax, 0
-    mov rdi, 0
+    mov rax, SYS_READ
+    mov rdi, STDIN
     mov rsi, file_name
-    mov rdx, 128
+    mov rdx, FILE_NAME_SIZE
     syscall
 
     test rax, rax
@@ -231,16 +256,16 @@ input_console_file_name:
     mov rcx, rax
     dec rcx
 
-    cmp byte [file_name + rcx], 0x0A
+    cmp byte [file_name + rcx], LF
     jne .no_lf
 
-    mov byte [file_name + rcx], 0
+    mov byte [file_name + rcx], ZR
     jmp .done
 
 .no_lf:
     cmp rax, 127
     ja .done
-    mov byte [file_name + rax], 0
+    mov byte [file_name + rax], ZR
 
 .done:
     pop rdx
@@ -265,14 +290,14 @@ input_console_string:
 
     .read_loop:
         mov rsi, input_buffer
-        mov rdx, 256
+        mov rdx, INPUT_BUF_SIZE
 
         mov rax, [len_input]
         add rsi, rax
         sub rdx, rax
 
-        mov rax, 0
-        mov rdi, 0
+        mov rax, SYS_READ
+        mov rdi, STDIN
         syscall
 
         test rax, rax
@@ -318,7 +343,7 @@ make_file:
     push rsi
     push rdx
 
-    mov rax, 2
+    mov rax, SYS_OPEN
     mov rdi, file_name
     mov rsi, 0x242
     mov rdx, 0777
@@ -339,7 +364,7 @@ close_file: ; в rax - 0 успех, -1 ошибки
 
     push rdi
 
-    mov rax, 3
+    mov rax, SYS_CLOSE
     mov rdi, [file_descriptor]
     syscall
 
@@ -357,7 +382,7 @@ write_file: ; return rax - кол-во записанных байт (-1 в сл
     push rsi
     push rdx
 
-    mov rax, 1
+    mov rax, SYS_WRITE
     mov rdi, [file_descriptor]
     mov rsi, output_buffer
     mov rdx, [len_output]
@@ -372,11 +397,11 @@ write_file: ; return rax - кол-во записанных байт (-1 в сл
     ret
 
 ok:
-    mov rax, 60
+    mov rax, SYS_EXIT
     xor rdi, rdi
     syscall
 
 error:
-    mov rax, 60
+    mov rax, SYS_EXIT
     mov rdi, 1
     syscall
