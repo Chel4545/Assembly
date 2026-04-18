@@ -1,6 +1,6 @@
-INPUT_BUF_SIZE  equ 256
-OUTPUT_BUF_SIZE equ 256
-FILE_NAME_SIZE  equ 128
+INPUT_BUF_SIZE  equ 10
+OUTPUT_BUF_SIZE equ 5
+FILE_NAME_SIZE  equ 10
 
 SYS_READ  equ 0
 SYS_WRITE equ 1
@@ -119,7 +119,7 @@ check_palindrome:
 
             cmp al, SPACE                  ; space
             je .check_word
-            cmp al, TAB                  ; tab
+            cmp al, TAB                    ; tab
             je .check_word
             cmp al, LF
             je .check_word
@@ -167,28 +167,95 @@ check_palindrome:
         jmp .finish_check
 
     .is_palindrome:
-        ; длина слова = r10 - rbx
+        ; rbx = начало слова
+        ; r10 = конец слова (сейчас inclusive-1, ниже сделаем exclusive)
+        ; r13 = текущее число байт в output_buffer
+
         inc r10
         mov rcx, r10
-        sub rcx, rbx
-        mov rax, rcx 
+        sub rcx, rbx 
 
-        lea rsi, [r11 + rbx]      ; от куда
-        lea rdi, [r12 + r13]      ; куда
+        mov rax, OUTPUT_BUF_SIZE
+        sub rax, r13                  ; rax = свободно в output_buffer
+        cmp rcx, rax
+        jbe .copy_whole               ; слово влезает целиком
 
-        cld                 ; направление копирования - вперед
-        rep movsb           ; копируем строку rsi++ rdi++ rcx--
+        cmp r13, 0
+        je .check_big_word
 
-        add r13, rax
+        mov qword [len_output], r13
+        call write_file
+        xor r13, r13
+        mov qword [len_output], 0
 
-        mov [len_output], r13
+        .check_big_word:
+            ; теперь output_buffer пустой
+            cmp rcx, OUTPUT_BUF_SIZE
+            ja .while
 
-        mov r8, r10
-        jmp .skip_delims
-    
+        .copy_whole:
+            ; копируем слово целиком в output_buffer + r13
+            mov rax, rcx                 
+
+            lea rsi, [r11 + rbx]
+            lea rdi, [r12 + r13]
+
+            cld
+            rep movsb
+
+            add r13, rax
+            mov qword [len_output], r13
+
+            ; если буфер заполнился ровно - сразу сбросить в файл
+            cmp r13, OUTPUT_BUF_SIZE
+            jne .end_while
+
+        .while:
+            lea rsi, [r11 + rbx] 
+
+        .copy_chunks:
+            cmp rcx, OUTPUT_BUF_SIZE
+            jbe .copy_tail                ; остался хвост меньше буфера
+
+            mov rdx, rcx                    
+            mov rcx, OUTPUT_BUF_SIZE
+
+            mov rdi, r12                  ; писать с начала output_buffer
+            cld
+            rep movsb
+
+            mov r13, OUTPUT_BUF_SIZE
+            mov qword [len_output], OUTPUT_BUF_SIZE
+            call write_file
+
+            xor r13, r13
+            mov qword [len_output], 0
+
+            mov rcx, rdx
+            sub rcx, OUTPUT_BUF_SIZE
+        jmp .copy_chunks
+
+        .copy_tail:
+            test rcx, rcx
+            jz .end_while
+
+            mov rax, rcx
+            mov rdi, r12
+            cld
+            rep movsb
+
+            mov r13, rax
+            mov qword [len_output], r13
+            jmp .end_while
+
+
+        .end_while:
+            mov r8, r10
+            jmp .skip_delims
+
     .not_palindrome:
-        mov r8, r10
-        jmp .skip_delims
+            mov r8, r10
+            jmp .skip_delims
 
     .end_check_default:
         mov qword [len_input], 0
@@ -210,14 +277,15 @@ check_palindrome:
         mov rsp, rbp
         pop rbp
         ret
-    
+
 
 
 output_console_message:
     push rbp
     mov  rbp, rsp
 
-    push rdi
+    push rcx
+    push r11
     push rsi
     push rdx
 
@@ -230,7 +298,9 @@ output_console_message:
     pop rdx
     pop rsi
     pop rdi
-    
+    pop r11
+    pop rcx
+
     mov rsp, rbp
     pop rbp
     ret
@@ -240,6 +310,7 @@ input_console_file_name:
     mov  rbp, rsp
 
     push rcx
+    push r11
     push rdi
     push rsi
     push rdx
@@ -271,6 +342,7 @@ input_console_file_name:
     pop rdx
     pop rsi
     pop rdi
+    pop r11
     pop rcx
 
     mov rsp, rbp
@@ -282,6 +354,8 @@ input_console_string:
     push rbp
     mov  rbp, rsp
 
+    push rcx
+    push r11
     push rdi
     push rsi
     push rdx
@@ -311,7 +385,7 @@ input_console_string:
         jz .read_loop
 
         call write_file
-        jmp .read_loop
+
     jmp .read_loop
 
     .eof:
@@ -330,6 +404,8 @@ input_console_string:
         pop rdx
         pop rsi
         pop rdi
+        pop rcx
+        pop r11
 
         mov rsp, rbp
         pop rbp
@@ -339,20 +415,24 @@ make_file:
     push rbp
     mov  rbp, rsp
 
+    push rcx
+    push r11
     push rdi
     push rsi
     push rdx
 
     mov rax, SYS_OPEN
     mov rdi, file_name
-    mov rsi, 0x242
-    mov rdx, 0777
+    mov rsi, 578 
+    mov rdx, 666o
     syscall
     mov [file_descriptor], rax
 
     pop rdx
     pop rsi
     pop rdi
+    pop r11
+    pop rcx
     
     mov rsp, rbp
     pop rbp
@@ -362,6 +442,8 @@ close_file: ; в rax - 0 успех, -1 ошибки
     push rbp
     mov  rbp, rsp
 
+    push rcx
+    push r11
     push rdi
 
     mov rax, SYS_CLOSE
@@ -369,6 +451,8 @@ close_file: ; в rax - 0 успех, -1 ошибки
     syscall
 
     pop rdi
+    pop r11
+    pop rcx
 
     mov rsp, rbp
     pop rbp
@@ -378,6 +462,8 @@ write_file: ; return rax - кол-во записанных байт (-1 в сл
     push rbp
     mov  rbp, rsp
 
+    push rcx
+    push r11
     push rdi
     push rsi
     push rdx
@@ -391,6 +477,8 @@ write_file: ; return rax - кол-во записанных байт (-1 в сл
     pop rdx
     pop rsi
     pop rdi
+    pop r11
+    pop rcx
 
     mov rsp, rbp
     pop rbp
