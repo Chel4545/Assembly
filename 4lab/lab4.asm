@@ -54,8 +54,6 @@ left_expression:
     push rbp
     mov  rbp, rsp
 
-
-
     ; cos α
     movsd xmm0, [rel a]
     call cos
@@ -121,21 +119,8 @@ right_expression:
         ; cos(nα) * x^n
         mulsd xmm0, xmm1
 
-        ; n!
-        mov r9, 1
-        mov r10, 1
-        .factorial:
-            cmp r9, r8
-            jg .end_factorial
-
-            imul r10, r9
-            inc r9
-        jmp .factorial
-
-        .end_factorial:
-
-        ; cos(nα) * x^n / n!
-        cvtsi2sd xmm1, r10
+        ; cos(nα) * x^n / n
+        cvtsi2sd xmm1, r8
         divsd xmm0, xmm1
 
         sub rsp, 16
