@@ -29,7 +29,7 @@ section .rodata
 section .bss
     x        resq 1
     a        resq 1
-    accuracy resd 1
+    accuracy resq 1
     output_1 resq 1
     output_2 resq 1
     file_ptr resq 1
@@ -42,8 +42,8 @@ main:
     mov rbp, rsp
 
     call console_inputs
-    call right_expression
     call left_expression
+    call right_expression
     call console_outputs
 
     mov edi, 0
@@ -92,10 +92,23 @@ right_expression:
 
     call file_open
 
-    mov r8, 1
+    movsd xmm2, [rel output_1] ; output_2 = 0.0
+    divsd xmm2, [rel accuracy]
+    cvttsd2si r10, xmm2
 
+    pxor xmm0, xmm0
+    movsd [rel output_2], xmm0
+
+    mov r8, 1
     .while:
-        cmp r8, [rel accuracy]
+        movsd xmm0, [rel output_2]
+        mulsd xmm0, [rel two] 
+        divsd xmm0, [rel accuracy]
+        cvttsd2si r11, xmm0
+        push r10
+        push r11
+        
+        cmp r11, r10
         je .end_while
 
         ; cos(nα)
@@ -136,6 +149,8 @@ right_expression:
         movsd [rel output_2], xmm0
 
         inc r8
+        pop r11
+        pop r10
     jmp .while
 
     .end_while:
@@ -182,7 +197,7 @@ console_inputs:
     call printf
 
     ; scanf("%d", &accuracy)
-    lea rdi, [rel format_in_int]
+    lea rdi, [rel format_in_double]
     lea rsi, [rel accuracy]
     xor eax, eax
     call scanf

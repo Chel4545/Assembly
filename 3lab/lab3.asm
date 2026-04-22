@@ -1,5 +1,5 @@
-INPUT_BUF_SIZE  equ 10
-OUTPUT_BUF_SIZE equ 5
+INPUT_BUF_SIZE  equ 20
+OUTPUT_BUF_SIZE equ 50
 FILE_NAME_SIZE  equ 10
 
 SYS_READ  equ 0
@@ -16,6 +16,10 @@ TAB   equ 0x09
 LF    equ 0x0A
 CR    equ 0x0D
 ZR    equ 0x00
+
+O_CREAT  equ 64
+O_TRUNC  equ 512
+O_RDWR   equ 2
 
 section .rodata
     message_file db 'Input file: '
@@ -159,7 +163,7 @@ check_palindrome:
         lea rsi, [r11 + r8] ; от куда
         lea rdi, [r11]      ; куда
 
-        cld                 ; направление копирования - вперед
+        cld                 ; направление копирования - вперед (чистит флаг DF std - наоборот)
         rep movsb           ; копируем строку rsi++ rdi++ rcx--
 
         mov [len_input], rax
@@ -168,7 +172,7 @@ check_palindrome:
 
     .is_palindrome:
         ; rbx = начало слова
-        ; r10 = конец слова (сейчас inclusive-1, ниже сделаем exclusive)
+        ; r10 = конец слова + 1
         ; r13 = текущее число байт в output_buffer
 
         inc r10
@@ -195,7 +199,7 @@ check_palindrome:
 
         .copy_whole:
             ; копируем слово целиком в output_buffer + r13
-            mov rax, rcx                 
+            mov rax, rcx
 
             lea rsi, [r11 + rbx]
             lea rdi, [r12 + r13]
@@ -423,7 +427,7 @@ make_file:
 
     mov rax, SYS_OPEN
     mov rdi, file_name
-    mov rsi, 578 
+    mov rsi, O_CREAT | O_TRUNC | O_RDWR 
     mov rdx, 666o
     syscall
     mov [file_descriptor], rax
