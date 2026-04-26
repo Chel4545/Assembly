@@ -1,8 +1,8 @@
 extern printf
 extern scanf
 
-extern cos
-extern log
+extern cosf
+extern logf
 
 extern fopen
 extern fprintf
@@ -11,28 +11,29 @@ extern fclose
 extern exit
 
 section .rodata
+    ; ввод файла при запуске
     input_msg_x db "Enter x: ", 0
     input_msg_a db "Enter a: ", 0
     input_msg_acc db "Enter accuracy: ", 0
 
-    format_in_double db "%lf", 0
-    format_out_double db "Res%d: %lf", 10, 0
+    format_in_float db "%f", 0
+    format_out_float db "Res%d: %f", 10, 0
     format_in_int db "%d", 0
 
     file_name db "data.txt", 0
     file_mode db "w", 0
-    file_fmt  db "n = %d, term = %lf", 10, 0
+    file_fmt  db "n = %d, term = %f", 10, 0
 
-    one dq 1.0
-    two dq -2.0
+    one dd 1.0
+    two dd -2.0
 
 section .bss
-    x        resq 1
-    a        resq 1
-    accuracy resq 1
-    output_1 resq 1
-    output_2 resq 1
-    file_ptr resq 1
+    x        resd 1
+    a        resd 1
+    accuracy resd 1
+    output_1 resd 1
+    output_2 resd 1
+    file_ptr resd 1
 
 section .text
     global main
@@ -54,33 +55,33 @@ left_expression:
     push rbp
     mov  rbp, rsp
 
-    ; cos α
-    movsd xmm0, [rel a]
-    call cos
-    movsd [rel output_1], xmm0
+    ; cosf α
+    movss xmm0, [rel a]
+    call cosf
+    movss [rel output_1], xmm0
 
-    ; -2x cos α
-    movsd xmm0, [rel x]
-    mulsd xmm0, [rel two]
-    mulsd xmm0, [rel output_1]
-    movsd [rel output_1], xmm0
+    ; -2x cosf α
+    movss xmm0, [rel x]
+    mulss xmm0, [rel two]
+    mulss xmm0, [rel output_1]
+    movss [rel output_1], xmm0
 
-    ; 1 - 2x cos(a)
-    movsd xmm0, [rel one]
-    addsd xmm0, [rel output_1]
-    movsd [rel output_1], xmm0
+    ; 1 - 2x cosf(a)
+    movss xmm0, [rel one]
+    addss xmm0, [rel output_1]
+    movss [rel output_1], xmm0
 
-    ; 1 − 2x cos α + x^2
-    movsd xmm0, [rel x]
-    mulsd xmm0, xmm0
-    movsd xmm1, [rel output_1]
-    addsd xmm1, xmm0
-    movsd [rel output_1], xmm1
+    ; 1 − 2x cosf α + x^2
+    movss xmm0, [rel x]
+    mulss xmm0, xmm0
+    movss xmm1, [rel output_1]
+    addss xmm1, xmm0
+    movss [rel output_1], xmm1
 
-    ; ln (1 − 2x cos α + x^2) 
-    movsd xmm0, [rel output_1]
-    call log
-    movsd [rel output_1], xmm0
+    ; ln (1 − 2x cosf α + x^2) 
+    movss xmm0, [rel output_1]
+    call logf
+    movss [rel output_1], xmm0
 
     mov rsp, rbp
     pop rbp
@@ -92,61 +93,62 @@ right_expression:
 
     call file_open
 
-    movsd xmm2, [rel output_1] ; output_2 = 0.0
-    divsd xmm2, [rel accuracy]
-    cvttsd2si r10, xmm2
+    movss xmm2, [rel output_1] ; output_2 = 0.0
+    divss xmm2, [rel accuracy]
+    cvttss2si r10, xmm2
 
-    pxor xmm0, xmm0
-    movsd [rel output_2], xmm0
+    xorps xmm0, xmm0
+    movss [rel output_2], xmm0
 
     mov r8, 1
     .while:
-        movsd xmm0, [rel output_2]
-        mulsd xmm0, [rel two] 
-        divsd xmm0, [rel accuracy]
-        cvttsd2si r11, xmm0
+        movss xmm0, [rel output_2]
+        mulss xmm0, [rel two] 
+        divss xmm0, [rel accuracy]
+        cvttss2si r11, xmm0
         push r10
         push r11
         
         cmp r11, r10
         je .end_while
 
-        ; cos(nα)
-        cvtsi2sd xmm0, r8   ; перекинуть из r8(int) в xmm0(double)
-        mulsd xmm0, [rel a]
+        ; cosf(nα)
+        cvtsi2ss xmm0, r8   ; перекинуть из r8(int) в xmm0(double)
+        mulss xmm0, [rel a]
         push r8
-        call cos
+        call cosf
         pop r8
 
         ; x^n
-        movsd xmm1, [rel one]   ; result = 1.0
+        movss xmm1, [rel one]   ; result = 1.0
         mov r9, 1
+        ; тут сделать через x^n-1 в xmm2
         .pow:
             cmp r9, r8
             jg .end_pow
-            mulsd xmm1, [rel x]
+            mulss xmm1, [rel x]
             inc r9
             jmp .pow
         .end_pow:
 
-        ; cos(nα) * x^n
-        mulsd xmm0, xmm1
+        ; cosf(nα) * x^n
+        mulss xmm0, xmm1
 
-        ; cos(nα) * x^n / n
-        cvtsi2sd xmm1, r8
-        divsd xmm0, xmm1
+        ; cosf(nα) * x^n / n
+        cvtsi2ss xmm1, r8
+        divss xmm0, xmm1
 
         sub rsp, 16
         mov [rsp], r8
-        movsd [rsp+8], xmm0 
+        movss [rsp+8], xmm0 
         call file_write
         mov r8, [rsp]
-        movsd xmm0, [rsp+8]
+        movss xmm0, [rsp+8]
         add rsp, 16
 
-        ; ∑ cos(nα) * x^n / n!
-        addsd xmm0, [rel output_2]
-        movsd [rel output_2], xmm0
+        ; ∑ cosf(nα) * x^n / n!
+        addss xmm0, [rel output_2]
+        movss [rel output_2], xmm0
 
         inc r8
         pop r11
@@ -155,9 +157,9 @@ right_expression:
 
     .end_while:
 
-    movsd xmm0, [rel output_2]
-    mulsd xmm0, [rel two]
-    movsd [rel output_2], xmm0
+    movss xmm0, [rel output_2]
+    mulss xmm0, [rel two]
+    movss [rel output_2], xmm0
 
     call file_close
 
@@ -175,7 +177,7 @@ console_inputs:
     call printf
 
     ; scanf("%lf", &x)
-    lea rdi, [rel format_in_double]
+    lea rdi, [rel format_in_float]
     lea rsi, [rel x]
     xor eax, eax
     call scanf
@@ -186,7 +188,7 @@ console_inputs:
     call printf
 
     ; scanf("%lf", &a)
-    lea rdi, [rel format_in_double]
+    lea rdi, [rel format_in_float]
     lea rsi, [rel a]
     xor eax, eax
     call scanf
@@ -197,7 +199,7 @@ console_inputs:
     call printf
 
     ; scanf("%d", &accuracy)
-    lea rdi, [rel format_in_double]
+    lea rdi, [rel format_in_float]
     lea rsi, [rel accuracy]
     xor eax, eax
     call scanf
@@ -211,16 +213,16 @@ console_outputs:
     mov  rbp, rsp
 
     ; printf("Output 1: %lf\n", output_1)
-    lea rdi, [rel format_out_double]
+    lea rdi, [rel format_out_float]
     mov esi, 1
-    movsd xmm0, [rel output_1]
+    cvtss2sd xmm0, [rel output_1]
     mov eax, 1
     call printf
 
     ; printf("Output 2: %lf\n", output_2)
-    lea rdi, [rel format_out_double]
+    lea rdi, [rel format_out_float]
     mov esi, 2
-    movsd xmm0, [rel output_2]
+    cvtss2sd xmm0, [rel output_2]
     mov eax, 1
     call printf
 
