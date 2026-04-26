@@ -16,32 +16,42 @@ section .rodata
     input_msg_a db "Enter a: ", 0
     input_msg_acc db "Enter accuracy: ", 0
 
+    no_file_name_msg db "Error: no file name", 10, 0
+    open_file_error_msg db "Error: couldn't open the file", 10, 0
+    input_error_msg db "Error: invalid input", 10, 0
+    x_range_error_msg db "Error: mod(x) must be <= 1", 10, 0
+    acc_error_msg db "Error: accuracy must be > 0", 10, 0
+
     format_in_float db "%f", 0
     format_out_float db "Res%d: %f", 10, 0
-    format_in_int db "%d", 0
 
-    file_name db "data.txt", 0
     file_mode db "w", 0
     file_fmt  db "n = %d, term = %f", 10, 0
 
-    one dd 1.0
-    two dd -2.0
+    minus_one dd -1.0
+    one       dd 1.0
+    two       dd -2.0
 
 section .bss
-    x        resd 1
-    a        resd 1
-    accuracy resd 1
-    output_1 resd 1
-    output_2 resd 1
-    file_ptr resd 1
+    x         resd 1
+    a         resd 1
+    accuracy  resd 1
+    output_1  resd 1
+    output_2  resd 1
+    file_name resq 1
+    file_ptr  resq 1
+    x_power   resd 1
 
 section .text
     global main
 
 main:
+    ;rdi = argc
+    ;rsi = argv
     push rbp
     mov rbp, rsp
 
+    call get_file_name
     call console_inputs
     call left_expression
     call right_expression
@@ -50,6 +60,28 @@ main:
     mov edi, 0
     call exit
 
+
+get_file_name:
+    push rbp
+    mov  rbp, rsp
+
+    cmp rdi, 2
+    jne .bad_args
+
+    mov rax, [rsi + 8]
+    mov [rel file_name], rax
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
+    .bad_args:
+        lea rdi, [rel no_file_name_msg]
+        xor eax, eax
+        call printf
+
+        mov edi, 1
+        call exit
 
 left_expression:
     push rbp
@@ -93,66 +125,63 @@ right_expression:
 
     call file_open
 
-    movss xmm2, [rel output_1] ; output_2 = 0.0
-    divss xmm2, [rel accuracy]
-    cvttss2si r10, xmm2
-
-    xorps xmm0, xmm0
-    movss [rel output_2], xmm0
+    movss xmm0, [rel one]
+    movss [rel x_power], xmm0
 
     mov r8, 1
     .while:
         movss xmm0, [rel output_2]
         mulss xmm0, [rel two] 
-        divss xmm0, [rel accuracy]
-        cvttss2si r11, xmm0
-        push r10
-        push r11
+        subss xmm0, [rel output_1]
+        ucomiss xmm0, [rel accuracy] 
+        ja .continue_while
+
+        xorps xmm1, xmm1
+        subss xmm1, [rel accuracy]
+        ucomiss xmm0, xmm1
+        jb .continue_while
+
+        jmp .end_while
         
-        cmp r11, r10
-        je .end_while
+        .continue_while:
+            ; cosf(nα)
+            cvtsi2ss xmm0, r8   ; перекинуть из r8(int) в xmm0(double)
+            mulss xmm0, [rel a]
+            sub rsp, 16
+            mov [rsp], r8
+            mov [rsp+8], r10
+            call cosf
+            mov r8, [rsp]
+            mov r10, [rsp+8]
+            add rsp, 16
 
-        ; cosf(nα)
-        cvtsi2ss xmm0, r8   ; перекинуть из r8(int) в xmm0(double)
-        mulss xmm0, [rel a]
-        push r8
-        call cosf
-        pop r8
+            ; x^n
+            movss xmm2, [rel x_power]
+            mulss xmm2, [rel x]
+            movss [rel x_power], xmm2
 
-        ; x^n
-        movss xmm1, [rel one]   ; result = 1.0
-        mov r9, 1
-        ; тут сделать через x^n-1 в xmm2
-        .pow:
-            cmp r9, r8
-            jg .end_pow
-            mulss xmm1, [rel x]
-            inc r9
-            jmp .pow
-        .end_pow:
+            ; cosf(nα) * x^n
+            mulss xmm0, xmm2
 
-        ; cosf(nα) * x^n
-        mulss xmm0, xmm1
+            ; cosf(nα) * x^n / n
+            cvtsi2ss xmm1, r8
+            divss xmm0, xmm1
 
-        ; cosf(nα) * x^n / n
-        cvtsi2ss xmm1, r8
-        divss xmm0, xmm1
+            sub rsp, 32
+            mov [rsp], r8
+            mov [rsp+8], r10
+            movss [rsp+16], xmm0
+            call file_write
+            mov r8, [rsp]
+            mov r10, [rsp+8]
+            movss xmm0, [rsp+16]
+            add rsp, 32
 
-        sub rsp, 16
-        mov [rsp], r8
-        movss [rsp+8], xmm0 
-        call file_write
-        mov r8, [rsp]
-        movss xmm0, [rsp+8]
-        add rsp, 16
+            ; ∑ cosf(nα) * x^n / n!
+            addss xmm0, [rel output_2]
+            movss [rel output_2], xmm0
 
-        ; ∑ cosf(nα) * x^n / n!
-        addss xmm0, [rel output_2]
-        movss [rel output_2], xmm0
-
-        inc r8
-        pop r11
-        pop r10
+            inc r8
     jmp .while
 
     .end_while:
@@ -182,6 +211,18 @@ console_inputs:
     xor eax, eax
     call scanf
 
+    cmp eax, 1
+    jne .input_error
+
+    movss xmm0, [rel x]
+    ucomiss xmm0, [rel one]
+    jp .x_range_error        ; nan
+    ja .x_range_error        
+
+    ucomiss xmm0, [rel minus_one]
+    jp .x_range_error        
+    jb .x_range_error  
+
     ; printf("Enter a: ")
     lea rdi, [rel input_msg_a]
     xor eax, eax
@@ -192,6 +233,9 @@ console_inputs:
     lea rsi, [rel a]
     xor eax, eax
     call scanf
+
+    cmp eax, 1
+    jne .input_error
 
     ; printf("Enter accuracy: ")
     lea rdi, [rel input_msg_acc]
@@ -204,9 +248,42 @@ console_inputs:
     xor eax, eax
     call scanf
 
+    cmp eax, 1
+    jne .input_error
+
+    movss xmm0, [rel accuracy]
+    xorps xmm1, xmm1          
+    ucomiss xmm0, xmm1
+    jp .acc_error            
+    jbe .acc_error
+
     mov rsp, rbp
     pop rbp
     ret
+
+    .input_error:
+        lea rdi, [rel input_error_msg]
+        xor eax, eax
+        call printf
+
+        mov edi, 1
+        call exit
+
+    .x_range_error:
+        lea rdi, [rel x_range_error_msg]
+        xor eax, eax
+        call printf
+
+        mov edi, 1
+        call exit
+
+    .acc_error:
+        lea rdi, [rel acc_error_msg]
+        xor eax, eax
+        call printf
+
+        mov edi, 1
+        call exit
 
 console_outputs:
     push rbp
@@ -235,7 +312,7 @@ file_open:
     mov  rbp, rsp
 
     ; FILE *file = fopen("output.txt", "w");
-    lea rdi, [rel file_name]
+    mov rdi, [rel file_name]
     lea rsi, [rel file_mode]
     call fopen
     test rax, rax
@@ -245,7 +322,11 @@ file_open:
     jmp .file_open_success
 
     .file_open_error:
+        lea rdi, [rel open_file_error_msg]
         xor eax, eax
+        call printf
+
+        mov edi, 1
         call exit
 
     .file_open_success:
@@ -278,3 +359,4 @@ file_close:
     mov rsp, rbp
     pop rbp
     ret
+
