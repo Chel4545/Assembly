@@ -1,5 +1,5 @@
 INPUT_BUF_SIZE  equ 12
-OUTPUT_BUF_SIZE equ 12
+OUTPUT_BUF_SIZE equ 20
 FILE_NAME_SIZE  equ 10
 
 SYS_READ  equ 0
@@ -32,8 +32,10 @@ section .bss
     output_buffer   resb OUTPUT_BUF_SIZE
     len_output      resq 1
 
-    file_name       resb FILE_NAME_SIZE
+    file_name       resb FILE_NAME_SIZE + 1
     file_descriptor resq 1
+
+    has_output_word resb 1
 
 section .text
     global _start
@@ -60,13 +62,14 @@ menu:
     pop rbp
     ret
 
-check_palindrome:
+; возвращает:
+; rax - длина имени файла
+input_console_file_name:
     push rbp
     mov  rbp, rsp
 
-    push rax
-    push rbx
     push rcx
+    push rdx
     push rsi
     push rdi
     push r8
@@ -75,197 +78,86 @@ check_palindrome:
     push r11
     push r12
     push r13
+    push rbx
 
-    mov r11, input_buffer         ; r11 = адрес начала буфера для чтения
-    mov r12, output_buffer        ; r12 = адрес начала буфера для записи
-    xor r8, r8                    ; r8 = начало строки
-    xor r13, r13                  ; текущая длина output_buffer
-    mov qword [len_output], 0
+    mov rax, SYS_READ
+    mov rdi, STDIN
+    mov rsi, input_buffer
+    mov rdx, INPUT_BUF_SIZE
+    syscall
 
-    .skip_delims:
-        cmp r8, [len_input]
-        jae .end_check_default
+    test rax, rax
+    js error
+    jz error              
 
-        ; al = строка[r8]
-        mov al, [r11 + r8]
+    mov [len_input], rax
 
-        cmp al, SPACE                  ; space
-        je .inc_skip
-        cmp al, TAB                    ; tab
-        je .inc_skip
-        cmp al, LF
-        je .LFCR_skip
-        cmp al, CR
-        je .LFCR_skip
-        jmp .word_start_found
+    lea r11, input_buffer
+    xor r8, r8
 
-    .inc_skip:
-        inc r8
-        jmp .skip_delims
+    mov r10, 1          ; конец буфера считать концом слова
+    xor r13, r13        ; LF не записывать в output_buffer
 
-    .LFCR_skip:
-        mov [output_buffer + r13], al
-        inc r13
-        mov [len_output], r13
-        inc r8
-        jmp .skip_delims
+    call get_word
 
-    .word_start_found:
-        mov rbx, r8                   ; rbx = начало слова
-        mov r9, r8                    ; r9 = конец строки
+    cmp rax, 1
+    jne error
 
-        .find_delims:
-            cmp r9, [len_input]
-            jz .border_buffer ; строка закончилась не на пробел, проверить через доп буфер
+    ; rcx = длина имени файла
+    mov rcx, r9
+    sub rcx, r8
 
-            ; al = строка[r8]
-            mov al, [r11 + r9]
+    ; нет имени файла
+    test rcx, rcx
+    jz error
 
-            cmp al, SPACE                  ; space
-            je .check_word
-            cmp al, TAB                    ; tab
-            je .check_word
-            cmp al, LF
-            je .check_word
-            cmp al, CR
-            je .check_word
+    ; вышли за буфер в имени файла
+    cmp rcx, FILE_NAME_SIZE
+    ja error
 
-            inc r9
-        jmp .find_delims
-        
-    .check_word:
-        mov r10, r9
-        dec r9
+    mov r10, rcx        ; сохранить длину имени
 
-        .loop_check:
-            cmp r8, r9
-            jge .is_palindrome
+    ; записваем имя файла в буфер
+    lea rsi, [r11 + r8]
+    lea rdi, [file_name]
 
-            ; al =строка[r8]
-            mov al, [r11 + r8]
+    cld
+    rep movsb
 
-            ; dl = строка[r10]
-            mov dl, [r11 + r9]
+    mov byte [file_name + r10], ZR
 
-            cmp al, dl
-            jne .not_palindrome
+    ; перенести хвост после имени файла в начало input_buffer
+    mov rdx, [len_input]    
+    mov rcx, r9             
 
-            inc r8
-            dec r9
-        jmp .loop_check
+    cmp rcx, rdx
+    jae .no_tail ;хвоста нет
 
-    .border_buffer:
-        ;копируем часть слова в входной буфер
-        mov rcx, r9
-        sub rcx, r8
-        mov rax, rcx                   ; сохранить длину
+    inc rcx
 
-        lea rsi, [r11 + r8] ; от куда
-        lea rdi, [r11]      ; куда
+    cmp rcx, rdx
+    jae .no_tail ;был \n
 
-        cld                 ; направление копирования - вперед (чистит флаг DF std - наоборот)
-        rep movsb           ; копируем строку rsi++ rdi++ rcx--
+    mov rbx, rdx
+    sub rbx, rcx            ; rbx = длина хвоста
 
-        mov [len_input], rax
+    lea rsi, [input_buffer + rcx]
+    lea rdi, [input_buffer]
+    mov rcx, rbx
 
-        jmp .finish_check
+    cld
+    rep movsb
 
-    .is_palindrome:
-        ; rbx = начало слова
-        ; r10 = конец слова + 1
-        ; r13 = текущее число байт в output_buffer
+    mov [len_input], rbx
+    jmp .done
 
-        inc r10
-        mov rcx, r10
-        sub rcx, rbx 
-
-        mov rax, OUTPUT_BUF_SIZE
-        sub rax, r13                  ; rax = свободно в output_buffer
-        cmp rcx, rax
-        jbe .copy_whole               ; слово влезает целиком
-
-        cmp r13, 0
-        je .check_big_word
-
-        mov qword [len_output], r13
-        call write_file
-        xor r13, r13
-        mov qword [len_output], 0
-
-        .check_big_word:
-            ; теперь output_buffer пустой
-            cmp rcx, OUTPUT_BUF_SIZE
-            ja .while
-
-        .copy_whole:
-            ; копируем слово целиком в output_buffer + r13
-            mov rax, rcx
-
-            lea rsi, [r11 + rbx]
-            lea rdi, [r12 + r13]
-
-            cld
-            rep movsb
-
-            add r13, rax
-            mov qword [len_output], r13
-
-            ; если буфер заполнился ровно - сразу сбросить в файл
-            cmp r13, OUTPUT_BUF_SIZE
-            jne .end_while
-
-        .while:
-            lea rsi, [r11 + rbx] 
-
-        .copy_chunks:
-            cmp rcx, OUTPUT_BUF_SIZE
-            jbe .copy_tail                ; остался хвост меньше буфера
-
-            mov rdx, rcx                    
-            mov rcx, OUTPUT_BUF_SIZE
-
-            mov rdi, r12                  ; писать с начала output_buffer
-            cld
-            rep movsb
-
-            mov r13, OUTPUT_BUF_SIZE
-            mov qword [len_output], OUTPUT_BUF_SIZE
-            call write_file
-
-            xor r13, r13
-            mov qword [len_output], 0
-
-            mov rcx, rdx
-            sub rcx, OUTPUT_BUF_SIZE
-        jmp .copy_chunks
-
-        .copy_tail:
-            test rcx, rcx
-            jz .end_while
-
-            mov rax, rcx
-            mov rdi, r12
-            cld
-            rep movsb
-
-            mov r13, rax
-            mov qword [len_output], r13
-            jmp .end_while
-
-
-        .end_while:
-            mov r8, r10
-            jmp .skip_delims
-
-    .not_palindrome:
-            mov r8, r10
-            jmp .skip_delims
-
-    .end_check_default:
+    .no_tail:
         mov qword [len_input], 0
 
-    .finish_check:
+    .done:
+        mov rax, r10
 
+        pop rbx
         pop r13
         pop r12
         pop r11
@@ -274,14 +166,282 @@ check_palindrome:
         pop r8
         pop rdi
         pop rsi
+        pop rdx
         pop rcx
-        pop rbx
-        pop rax
 
         mov rsp, rbp
         pop rbp
         ret
 
+; принимает:
+;   r11 = input_buffer
+;   r8  = позиция начала поиска
+;   r10 = 0, если EOF ещё не было
+;   r10 = 1, если это последний буфер после EOF
+;   r13 = 0, не сохранять LF
+;   r13 = 1, сохранять LF в output_buffer
+;
+; возвращает:
+;   rax = 0, слов больше нет
+;   rax = 1, слово найдено полностью
+;   rax = 2, слово началось, но не закончилось в input_buffer
+;   r8  = начало слова
+;   r9  = конец слова exclusive
+get_word:
+    push rbp
+    mov  rbp, rsp
+
+.skip_delims:
+    cmp r8, [len_input]
+    jae .not_found
+
+    mov al, [r11 + r8]
+
+    cmp al, SPACE
+    je .skip_one
+    cmp al, TAB
+    je .skip_one
+    cmp al, CR
+    je .skip_one
+
+    cmp al, LF
+    je .skip_lf
+
+    jmp .word_start_found
+
+    .skip_lf:
+        test r13, r13
+        jz .skip_one ;зач
+
+        call add_lf_to_buffer
+
+    .skip_one:
+        inc r8
+        jmp .skip_delims
+
+    .word_start_found:
+        mov r9, r8
+
+    .find_word_end:
+        cmp r9, [len_input]
+        jae .end_of_buffer
+
+        mov al, [r11 + r9]
+
+        cmp al, SPACE
+        je .found
+        cmp al, TAB
+        je .found
+        cmp al, LF
+        je .found
+        cmp al, CR
+        je .found
+
+        inc r9
+        jmp .find_word_end
+
+    .end_of_buffer:
+        test r10, r10
+        jnz .found   ; зач
+
+        mov rax, 2
+        jmp .done
+
+    .found:
+        mov rax, 1
+        jmp .done
+
+    .not_found:
+        xor rax, rax
+
+    .done:
+        mov rsp, rbp
+        pop rbp
+        ret
+
+; соглашение
+; принимает r12 = output_buffer, al = символ для записи
+; ничего важного не портит
+
+add_char_to_buffer:
+    push rbp
+    mov  rbp, rsp
+
+    push rbx
+    push rax
+
+    cmp qword [len_output], OUTPUT_BUF_SIZE
+    jb .store_char
+
+    call write_file
+    mov qword [len_output], 0
+
+    .store_char:
+        pop rax
+
+        mov rbx, [len_output]
+        mov [r12 + rbx], al
+        inc qword [len_output]
+
+        pop rbx
+
+        mov rsp, rbp
+        pop rbp
+        ret
+
+add_space_to_buffer:
+    push rbp
+    mov  rbp, rsp
+
+    push rax
+
+    mov al, SPACE
+    call add_char_to_buffer
+
+    pop rax
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
+; соглашение
+; принимает r12 = output_buffer
+; добавляет LF в output_buffer
+add_lf_to_buffer:
+    push rbp
+    mov  rbp, rsp
+
+    push rax
+
+    mov al, LF
+    call add_char_to_buffer
+
+    ; после переноса строки следующее слово в строке первое
+    mov byte [has_output_word], 0
+
+    pop rax
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
+; принимает:
+;   r11 = input_buffer
+;   r8  = начало слова
+;   r9  = конец слова exclusive
+;
+; возвращает:
+;   rax = 1, если палиндром
+;   rax = 0, если не палиндром
+check_palinom:
+    push rbp
+    mov  rbp, rsp
+
+    push r8
+    push r9
+    push rdx
+
+    ;слова нет
+    cmp r8, r9
+    jae .not_palindrome 
+
+    dec r9
+
+    .loop_check:
+        cmp r8, r9
+        jge .is_palindrome
+
+        mov al, [r11 + r8]
+        mov dl, [r11 + r9]
+
+        cmp al, dl
+        jne .not_palindrome
+
+        inc r8
+        dec r9
+    jmp .loop_check
+
+    .is_palindrome:
+        mov rax, 1
+        jmp .done
+
+    .not_palindrome:
+        xor rax, rax
+    
+    .done:
+
+        pop rdx
+        pop r9
+        pop r8
+
+        mov rsp, rbp
+        pop rbp
+        ret  
+
+; принимает:
+;   r11 = input_buffer
+;   r12 = output_buffer
+;   r8  = начало слова
+;   r9  = конец слова exclusive
+; возвращает:
+;   rax = длина остатка слова, который не влез в output_buffer
+
+add_word_to_buffer:
+    push rbp
+    mov  rbp, rsp
+
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push rbx
+
+    mov rcx, r9
+    sub rcx, r8  ;длина слова
+
+    mov rdx, OUTPUT_BUF_SIZE
+    sub rdx, [len_output] ; остаток который запишем
+
+    test rdx, rdx
+    jz .no_space
+
+    cmp rcx, rdx
+    jbe .copy_whole
+
+    mov rax, rcx
+    sub rax, rdx ; длина слова - что сможем записать
+    mov rcx, rdx
+    jmp .copy
+
+    .copy_whole:
+        xor rax, rax        ; остатка нет
+
+    .copy:
+        mov rbx, [len_output]
+        add [len_output], rcx
+
+        lea rsi, [r11 + r8]
+        lea rdi, [r12 + rbx]
+
+        cld
+        rep movsb
+
+        jmp .done
+
+    .no_space:
+        mov rax, rcx
+
+    .done:
+        pop rbx
+        pop rdi
+        pop rsi
+        pop rdx
+        pop rcx
+
+        mov rsp, rbp
+        pop rbp
+        ret
+  
 
 
 output_console_message:
@@ -290,6 +450,7 @@ output_console_message:
 
     push rcx
     push r11
+    push rdi
     push rsi
     push rdx
 
@@ -308,65 +469,29 @@ output_console_message:
     mov rsp, rbp
     pop rbp
     ret
-
-input_console_file_name:
-    push rbp
-    mov  rbp, rsp
-
-    push rcx
-    push r11
-    push rdi
-    push rsi
-    push rdx
-
-    mov rax, SYS_READ
-    mov rdi, STDIN
-    mov rsi, file_name
-    mov rdx, FILE_NAME_SIZE
-    syscall
-
-    test rax, rax
-    jle .done
-
-    mov rcx, rax
-    dec rcx
-
-    cmp byte [file_name + rcx], LF
-    jne .no_lf
-
-    mov byte [file_name + rcx], ZR
-    jmp .done
-
-.no_lf:
-    cmp rax, 127
-    ja .done
-    mov byte [file_name + rax], ZR
-
-.done:
-    pop rdx
-    pop rsi
-    pop rdi
-    pop r11
-    pop rcx
-
-    mov rsp, rbp
-    pop rbp
-    ret
     
-
 input_console_string:
     push rbp
     mov  rbp, rsp
 
     push rcx
+    push r10
     push r11
+    push r12
+    push r13
     push rdi
     push rsi
     push rdx
-
-    mov qword [len_input], 0
+    push r8
+    push r9
 
     .read_loop:
+        xor r10, r10
+
+        cmp qword [len_input], 0
+        jne .process_buffer
+
+    .read_more:
         mov rsi, input_buffer
         mov rdx, INPUT_BUF_SIZE
 
@@ -374,42 +499,130 @@ input_console_string:
         add rsi, rax
         sub rdx, rax
 
+        ; если места нет, значит слово длиннее input_buffer
+        test rdx, rdx
+        jz error
+
         mov rax, SYS_READ
         mov rdi, STDIN
         syscall
 
         test rax, rax
-        jz .eof
         js error
+        jz .eof
 
-        add qword [len_input], rax
+        add [len_input], rax
 
-        call check_palindrome
-        cmp qword [len_output], 0
-        jz .read_loop
+    .process_buffer:
+        lea r11, [input_buffer]
+        lea r12, [output_buffer]
+        xor r8, r8
+        mov r13, 1 ; сохранять LF в выходной файл
 
-        call write_file
-
-    jmp .read_loop
+        jmp .write_loop
 
     .eof:
         cmp qword [len_input], 0
-        jz .done
+        jz .finish
 
-        call check_palindrome
+        mov r10, 1
+
+        lea r11, [input_buffer]
+        lea r12, [output_buffer]
+        xor r8, r8
+        mov r13, 1
+
+    .write_loop:
+        call get_word
+
+        cmp rax, 0
+        je .buffer_done
+
+        cmp rax, 2
+        je .partial_word
+
+        ; rax = 1, слово найдено полностью
+        call check_palinom
+        test rax, rax
+        jz .next_word
+
+        cmp byte [has_output_word], 0
+        je .first_word_in_line
+
+        call add_space_to_buffer
+
+    .first_word_in_line:
+        mov byte [has_output_word], 1
+
+    .add_word_loop:
+        call add_word_to_buffer
+
+        test rax, rax
+        jz .next_word
+
+        push rax
+        call write_file
+        pop rax
+
+        mov qword [len_output], 0
+
+        mov r8, r9
+        sub r8, rax
+
+        jmp .add_word_loop
+
+    .next_word:
+        mov r8, r9
+        jmp .write_loop
+
+    .partial_word: ; перенос слова на границе буфера
+
+        mov rcx, [len_input]
+        sub rcx, r8             ; rcx = длина неполного слова
+
+        ; слово занимает весь буфер
+        cmp rcx, INPUT_BUF_SIZE
+        jae error
+
+        mov rdx, rcx            ; сохранить длину слова
+
+        lea rsi, [input_buffer + r8]
+        lea rdi, [input_buffer]
+
+        cld
+        rep movsb
+
+        mov [len_input], rdx
+
+        jmp .read_more
+
+    .buffer_done:
+        mov qword [len_input], 0
+
+        test r10, r10
+        jnz .finish
+
+        jmp .read_loop
+
+    .finish:
         cmp qword [len_output], 0
-        jz .done
+        je .done
+
         call write_file
 
     .done:
-
         mov rax, 1
 
+        pop r9
+        pop r8
         pop rdx
         pop rsi
         pop rdi
-        pop rcx
+        pop r13
+        pop r12
         pop r11
+        pop r10
+        pop rcx
 
         mov rsp, rbp
         pop rbp
@@ -430,6 +643,10 @@ make_file:
     mov rsi, O_CREAT | O_TRUNC | O_RDWR 
     mov rdx, 666o
     syscall
+
+    test rax, rax
+    js error
+    
     mov [file_descriptor], rax
 
     pop rdx
@@ -477,6 +694,9 @@ write_file: ; return rax - кол-во записанных байт (-1 в сл
     mov rsi, output_buffer
     mov rdx, [len_output]
     syscall
+
+    test rax, rax
+    js error
 
     pop rdx
     pop rsi
