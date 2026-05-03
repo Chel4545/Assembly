@@ -3,6 +3,7 @@ extern scanf
 
 extern cosf
 extern logf
+extern fabsf
 
 extern fopen
 extern fprintf
@@ -29,8 +30,9 @@ section .rodata
     file_fmt  db "n = %d, term = %f", 10, 0
 
     minus_one dd -1.0
-    one       dd 1.0
-    two       dd -2.0
+    one       dd  1.0
+    two       dd  2.0
+    minus_two dd -2.0
 
 section .bss
     x         resd 1
@@ -41,6 +43,9 @@ section .bss
     file_name resq 1
     file_ptr  resq 1
     x_power   resd 1
+    cos_a     resd 1
+    cos_prev  resd 1
+    cos_curr  resd 1
 
 section .text
     global main
@@ -49,7 +54,7 @@ main:
     ;rdi = argc
     ;rsi = argv
     push rbp
-    mov rbp, rsp
+    mov rbp, rsp 
 
     call get_file_name
     call console_inputs
@@ -94,7 +99,7 @@ left_expression:
 
     ; -2x cosf α
     movss xmm0, [rel x]
-    mulss xmm0, [rel two]
+    mulss xmm0, [rel minus_two]
     mulss xmm0, [rel output_1]
     movss [rel output_1], xmm0
 
@@ -125,69 +130,72 @@ right_expression:
 
     call file_open
 
+    ; подготовка степени
     movss xmm0, [rel one]
     movss [rel x_power], xmm0
 
-    mov r8, 1
+    ; подготовка косинуса
+    ; cos((n + 1)a) = 2 * cos(a) * cos(na) - cos((n - 1)a)
+    movss xmm0, [rel one]
+    movss [rel cos_prev], xmm0
+    movss xmm0, [rel a]
+    call cosf
+    movss [rel cos_a], xmm0
+    movss [rel cos_curr], xmm0
+
+    mov r12, 1
     .while:
         movss xmm0, [rel output_2]
-        mulss xmm0, [rel two] 
+        mulss xmm0, [rel minus_two]
         subss xmm0, [rel output_1]
-        ucomiss xmm0, [rel accuracy] 
-        ja .continue_while
+        call fabsf
+        ucomiss xmm0, [rel accuracy]
+        jbe .end_while
 
-        xorps xmm1, xmm1
-        subss xmm1, [rel accuracy]
-        ucomiss xmm0, xmm1
-        jb .continue_while
+        ; x^n
+        movss xmm2, [rel x_power]
+        mulss xmm2, [rel x]
+        movss [rel x_power], xmm2
 
-        jmp .end_while
-        
-        .continue_while:
-            ; cosf(nα)
-            cvtsi2ss xmm0, r8   ; перекинуть из r8(int) в xmm0(double)
-            mulss xmm0, [rel a]
-            sub rsp, 16
-            mov [rsp], r8
-            mov [rsp+8], r10
-            call cosf
-            mov r8, [rsp]
-            mov r10, [rsp+8]
-            add rsp, 16
+        ; cosf(nα) * x^n
+        movss xmm0, [rel cos_curr]
+        mulss xmm0, xmm2
 
-            ; x^n
-            movss xmm2, [rel x_power]
-            mulss xmm2, [rel x]
-            movss [rel x_power], xmm2
+        ; cosf(nα) * x^n / n
+        cvtsi2ss xmm1, r12
+        divss xmm0, xmm1
 
-            ; cosf(nα) * x^n
-            mulss xmm0, xmm2
+        sub rsp, 16
+        movss [rsp], xmm0
+        call file_write
+        movss xmm0, [rsp]
+        add rsp, 16
 
-            ; cosf(nα) * x^n / n
-            cvtsi2ss xmm1, r8
-            divss xmm0, xmm1
+        ; ∑ cosf(nα) * x^n / n!
+        addss xmm0, [rel output_2]
+        movss [rel output_2], xmm0
 
-            sub rsp, 32
-            mov [rsp], r8
-            mov [rsp+8], r10
-            movss [rsp+16], xmm0
-            call file_write
-            mov r8, [rsp]
-            mov r10, [rsp+8]
-            movss xmm0, [rsp+16]
-            add rsp, 32
+        ; обновляем cos:
+        ; cos_next = 2 * cos_a * cos_curr - cos_prev
+        movss xmm3, [rel cos_a]
+        mulss xmm3, [rel two]
+        mulss xmm3, [rel cos_curr]
+        subss xmm3, [rel cos_prev]
 
-            ; ∑ cosf(nα) * x^n / n!
-            addss xmm0, [rel output_2]
-            movss [rel output_2], xmm0
+        ; cos_prev = cos_curr
+        movss xmm4, [rel cos_curr]
+        movss [rel cos_prev], xmm4
 
-            inc r8
+        ; cos_curr = cos_next
+        movss [rel cos_curr], xmm3
+
+        inc r12
     jmp .while
 
     .end_while:
 
     movss xmm0, [rel output_2]
-    mulss xmm0, [rel two]
+    mulss xmm0, [rel minus_two]
     movss [rel output_2], xmm0
 
     call file_close
@@ -334,14 +342,14 @@ file_open:
         pop rbp
         ret
 
-file_write: ; xmm0 - term, r8 - n
+file_write: ; xmm0 - term, r12 - n
     push rbp
     mov  rbp, rsp
 
     ; fprintf(file, "n = %d, term = %lf\n", n, term);
     mov rdi, [rel file_ptr]
     lea rsi, [rel file_fmt]
-    mov rdx, r8
+    mov rdx, r12
     mov eax, 1
     call fprintf
 
@@ -359,4 +367,3 @@ file_close:
     mov rsp, rbp
     pop rbp
     ret
-
