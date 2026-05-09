@@ -1,5 +1,5 @@
-INPUT_BUF_SIZE  equ 12
-OUTPUT_BUF_SIZE equ 20
+INPUT_BUF_SIZE  equ 10
+OUTPUT_BUF_SIZE equ 10
 FILE_NAME_SIZE  equ 10
 
 SYS_READ  equ 0
@@ -211,7 +211,7 @@ get_word:
 
     .skip_lf:
         test r13, r13
-        jz .skip_one ;зач
+        jz .skip_one 
 
         call add_lf_to_buffer
 
@@ -242,7 +242,7 @@ get_word:
 
     .end_of_buffer:
         test r10, r10
-        jnz .found   ; зач
+        jnz .found 
 
         mov rax, 2
         jmp .done
@@ -589,7 +589,7 @@ input_console_string:
         lea rsi, [input_buffer + r8]
         lea rdi, [input_buffer]
 
-        cld
+        cld ; DF флаг = 0
         rep movsb
 
         mov [len_input], rdx
