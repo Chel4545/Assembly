@@ -32,11 +32,11 @@ trim_asm:
     mov r15d, r8d       # x_start
     mov dword ptr [rbp - 48], r9d   # y_start
 
-    # malloc(width * height * 3)
+    # malloc(width * height)
     movsxd rax, r13d    # rax = width
     movsxd r10, r14d    # r10 = height
     imul rax, r10       # rax = width * height
-    lea rdi, [rax + rax * 2]    # rdi = width * height * 3
+    mov rdi, rax    # rdi = width * height * 3
 
     call malloc
 
@@ -45,26 +45,27 @@ trim_asm:
 
     mov qword ptr [rbp - 56], rax   # сохранить result
 
-    # src_start = img + ((y_start * orig_width + x_start) * 3)
+    # src_start = img + (y_start * orig_width + x_start)
+
+    # y_start * orig_width
     movsxd rax, dword ptr [rbp - 48]    
-    movsxd r10, r12d                   
+    movsxd r10, r12d                 
     imul rax, r10                       
 
+    # + x_start
     movsxd r10, r15d                    
     add rax, r10    
 
-    lea rax, [rax + rax * 2]            
     lea r8, [rbx + rax]               
 
+    # ptr res
     mov r9, qword ptr [rbp - 56]
 
-    # src_row_bytes = orig_width * 3
+    # src_row_bytes = orig_width
     movsxd r10, r12d
-    lea r10, [r10 + r10 * 2]
 
     # dst_row_bytes = width * 3
     movsxd r11, r13d
-    lea r11, [r11 + r11 * 2]
 
     xor ecx, ecx        # y = 0
 
@@ -81,20 +82,11 @@ trim_asm:
     cmp edx, r13d  # строка
     jge .next_row
 
-    # result[dst_index + 0] = img[src_index + 0]
     mov al, byte ptr [rdi]
     mov byte ptr [rsi], al
 
-    # result[dst_index + 1] = img[src_index + 1]
-    mov al, byte ptr [rdi + 1]
-    mov byte ptr [rsi + 1], al
-
-    # result[dst_index + 2] = img[src_index + 2]
-    mov al, byte ptr [rdi + 2]
-    mov byte ptr [rsi + 2], al
-
-    add rdi, 3
-    add rsi, 3
+    inc rdi
+    inc rsi
 
     inc edx
     jmp .inner_loop

@@ -33,7 +33,7 @@ int main(int argc, char* argv[]) {
     }
 
     // получаем массив пикселей
-    unsigned char *img = stbi_load(input_file, &width, &height, &channels, 3);
+    unsigned char *img = stbi_load(input_file, &width, &height, &channels, 1);
     if (img == NULL) {
         printf("Ошибка при открытии файла\n");
         return 1;
@@ -63,7 +63,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (!stbi_write_bmp(output_file, crop_width, crop_height, 3, result)) {
+    if (!stbi_write_bmp(output_file, crop_width, crop_height, 1, result)) {
         printf("Ошибка при записи файла\n");
         free(result);
         stbi_image_free(img);
