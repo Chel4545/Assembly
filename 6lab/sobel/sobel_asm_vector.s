@@ -1,15 +1,15 @@
 .intel_syntax noprefix
 
 .global sobel_asm_vector
-.extern calloc
 
 # передаем:
 # rdi = img
-# esi = width
-# edx = height
+# rsi = result
+# edx = width
+# ecx = height
 #
 # возвращаем:
-# rax = unsigned char*
+# eax = 0/-1(успех/ошибка)
 
 sobel_asm_vector:
     push rbp
@@ -21,220 +21,315 @@ sobel_asm_vector:
     push r14
     push r15
 
-    sub rsp, 8                 
-
-    mov rbx, rdi   # img
-    mov r12d, esi  # width
-    mov r13d, edx  # height
-
-    # if (img == NULL) return NULL;
-    test rbx, rbx
-    jz .return_null
-
-    # if (width <= 0 || height <= 0) return NULL;
-    cmp r12d, 0
-    jle .return_null
-
-    cmp r13d, 0
-    jle .return_null
-
-    # calloc(width * height, sizeof(unsigned char))
-    movsxd rax, r12d 
-    movsxd rcx, r13d 
-    imul rax, rcx 
-
-    mov rdi, rax               
-    mov esi, 1
-
-    call calloc
-
-    test rax, rax
-    jz .return_null
-
-    mov r14, rax  # r14 result
-
-    # width < 3, height < 3
-    cmp r12d, 3
-    jl .done
-
-    cmp r13d, 3
-    jl .done
-
-    pxor xmm15, xmm15
-
-    # for (int y = 1; y < height - 1; y++)
-    mov r15d, 1                 # y
-
-.outer_loop:
-    mov eax, r13d
-    dec eax                     # eax = height - 1
-    cmp r15d, eax
-    jge .done
-
-    # top = img + (y - 1) * width
-    # mid = img + y * width
-    # bot = img + (y + 1) * width
-    # dst = result + y * width
-
-    movsxd rax, r15d 
-    dec rax 
-
-    movsxd rdx, r12d  
-    imul rax, rdx 
-
-    lea r8, [rbx + rax]         # r8 = top
-    
-    mov r9, r8
-    add r9, rdx                 # r9 = mid
-
-    mov r10, r9
-    add r10, rdx                # r10 = bot
-
-    lea r11, [r14 + rax]
-    add r11, rdx                # r11 = dst
-
-    # for (int x = 1; x < width - 1; x++)
-    mov ecx, 1                  # x
-
-.inner_loop:
-    mov eax, r12d
-    sub eax, 17 
-    cmp ecx, eax
-    jg .next_row
+    sub rsp, 16           
 
 
-    movdqu xmm8,  xmmword ptr [r8  + rcx - 1]   # a: top[x-1 .. x+14]
-    movdqu xmm9,  xmmword ptr [r8  + rcx]       # b: top[x   .. x+15]
-    movdqu xmm10, xmmword ptr [r8  + rcx + 1]   # c: top[x+1 .. x+16]
 
-    movdqu xmm11, xmmword ptr [r9  + rcx - 1]   # d: mid[x-1 .. x+14]
-    movdqu xmm12, xmmword ptr [r9  + rcx + 1]   # f: mid[x+1 .. x+16]
+    mov r12, rdi   # r12 = img
+    mov r13, rsi   # r13 = result
+    mov r14d, edx  # r14d = width
+    mov r15d, ecx  # r15d = height
+    mov ebx, r14d
+    dec ebx        # edx = width - 1
+    mov edx, r15d
+    dec edx        # ebx = height - 1
 
-    movdqu xmm13, xmmword ptr [r10 + rcx - 1]   # g: bot[x-1 .. x+14]
-    movdqu xmm14, xmmword ptr [r10 + rcx]       # h: bot[x   .. x+15]
-    movdqu xmm7,  xmmword ptr [r10 + rcx + 1]   # i: bot[x+1 .. x+16]
-
-    # gx
-    # xmm0 = c
-    movdqa xmm0, xmm10
-    punpcklbw xmm0, xmm15
-
-    # xmm1 = 2*f
-    movdqa xmm1, xmm12
-    punpcklbw xmm1, xmm15
-    paddw xmm1, xmm1
-
-    # xmm0 = c + 2*f
-    paddw xmm0, xmm1
-
-    # xmm1 = i
-    movdqa xmm1, xmm7
-    punpcklbw xmm1, xmm15
-
-    # xmm0 = c + 2*f + i
-    paddw xmm0, xmm1
-
-    # xmm2 = a
-    movdqa xmm2, xmm8
-    punpcklbw xmm2, xmm15
-
-    # xmm3 = 2*d
-    movdqa xmm3, xmm11
-    punpcklbw xmm3, xmm15
-    paddw xmm3, xmm3
-
-    # xmm2 = a + 2*d
-    paddw xmm2, xmm3
-
-    # xmm3 = g
-    movdqa xmm3, xmm13
-    punpcklbw xmm3, xmm15
-
-    # xmm2 = a + 2*d + g
-    paddw xmm2, xmm3
-
-    # xmm0 = gx
-    psubw xmm0, xmm2
-
-    # xmm0 = abs(gx)
-    movdqa xmm4, xmm0
-    psraw xmm4, 15
-    pxor xmm0, xmm4
-    psubw xmm0, xmm4
-
-    # gy
-    # xmm5 = g
-    movdqa xmm5, xmm13
-    punpckhbw xmm5, xmm15
-
-    # xmm6 = 2*h
-    movdqa xmm6, xmm14
-    punpckhbw xmm6, xmm15
-    paddw xmm6, xmm6
-
-    # xmm5 = g + 2*h
-    paddw xmm5, xmm6
-
-    # xmm6 = i
-    movdqa xmm6, xmm7
-    punpckhbw xmm6, xmm15
-
-    # xmm5 = g + 2*h + i
-    paddw xmm5, xmm6
-
-    # xmm2 = a
-    movdqa xmm2, xmm8
-    punpckhbw xmm2, xmm15
-
-    # xmm3 = 2*b
-    movdqa xmm3, xmm9
-    punpckhbw xmm3, xmm15
-    paddw xmm3, xmm3
-
-    # xmm2 = a + 2*b
-    paddw xmm2, xmm3
-
-    # xmm3 = c
-    movdqa xmm3, xmm10
-    punpckhbw xmm3, xmm15
-
-    # xmm2 = a + 2*b + c
-    paddw xmm2, xmm3
-
-    # xmm5 = gy
-    psubw xmm5, xmm2
-
-    # xmm5 = abs(gy)
-    movdqa xmm4, xmm5
-    psraw xmm4, 15
-    pxor xmm5, xmm4
-    psubw xmm5, xmm4
-
-    paddw xmm1, xmm5
+    xor eax, eax   # eax = 0
 
 
-.store_pixel:
-    packuswb xmm0, xmm1
 
-    movdqu xmmword ptr [r11 + rcx], xmm0
+    # if (img == NULL)
+    test r12, r12
+    jz .return_error
 
-    add ecx, 16
+    # if (result == NULL)
+    test r13, r13
+    jz .return_error
 
-    jmp .inner_loop
+    # if (width <= 0)
+    cmp r14d, 0
+    jle .return_error
 
-.next_row:
-    inc r15d
-    jmp .outer_loop
+    # if (height <= 0)
+    cmp r15d, 0
+    jle .return_error
 
-.done:
-    mov rax, r14
+    # if (width < 3)
+    cmp r14d, 3
+    jl .return_success
+
+    # if (height < 3)
+    cmp r15d, 3
+    jl .return_success
+
+
+
+    #(width - 2) % 8
+    mov eax, r14d
+    sub eax, 2 
+    and eax, 7 
+
+    # (width - 1) - скалярный остаток
+    mov r11d, ebx
+    sub r11d, eax
+
+
+
+    mov r8d, 1 # y = 1
+    .outer_loop:
+        cmp r8d, edx
+        jge .return_success
+
+        # (y - 1) * width
+        mov eax, r8d
+        dec eax
+        imul eax, r14d
+        movsxd rax, eax
+        lea rdi, [r12 + rax]       # rdi = top
+
+        # y * width
+        mov eax, r8d
+        imul eax, r14d
+        movsxd rax, eax
+        lea rsi, [r12 + rax]       # rsi = mid
+        lea r10, [r13 + rax]       # r10 = dst
+
+        # (y + 1) * width
+        mov eax, r8d
+        inc eax
+        imul eax, r14d
+        movsxd rax, eax
+        lea rcx, [r12 + rax]       # rcx = bot
+
+        mov r9d, 1 # x = 1
+        .vector_loop:
+            cmp r9d, r11d
+            jge .scalar_tail
+
+
+
+            pxor xmm0, xmm0
+
+            movq xmm1, qword ptr [rdi + r9 - 1]    # xmm1 = A
+            punpcklbw xmm1, xmm0                   
+
+            movq xmm2, qword ptr [rdi + r9]        # xmm2 = B
+            punpcklbw xmm2, xmm0                   
+
+            movq xmm3, qword ptr [rdi + r9 + 1]    # xmm3 = C
+            punpcklbw xmm3, xmm0                   
+
+            movq xmm4, qword ptr [rsi + r9 - 1]    # xmm4 = D
+            punpcklbw xmm4, xmm0                   
+
+            movq xmm5, qword ptr [rsi + r9 + 1]    # xmm5 = F
+            punpcklbw xmm5, xmm0                   
+
+            movq xmm6, qword ptr [rcx + r9 - 1]    # xmm6 = G
+            punpcklbw xmm6, xmm0                   
+
+            movq xmm7, qword ptr [rcx + r9]        # xmm7 = H
+            punpcklbw xmm7, xmm0                  
+
+            movq xmm8, qword ptr [rcx + r9 + 1]    # xmm8 = I
+            punpcklbw xmm8, xmm0      
+
+
+
+            #GX = (C + 2*F + I) - (A + 2*D + G)
+            
+            # xmm9 = C + 2*F + I
+            movdqa xmm9, xmm3
+
+            movdqa xmm10, xmm5
+            psllw xmm10, 1 
+            paddw xmm9, xmm10
+
+            paddw xmm9, xmm8
+        
+            # xmm10 = A + 2*D + G
+            movdqa xmm10, xmm1
+
+            movdqa xmm11, xmm4
+            psllw xmm11, 1  
+            paddw xmm10, xmm11
+
+            paddw xmm10, xmm6
+
+            # xmm9 = GX
+            psubw xmm9, xmm10
+
+
+            # GY = (G + 2*H + I) - (A + 2*B + C)
+
+            # xmm10 = G + 2*H + I
+            movdqa xmm10, xmm6
+
+            movdqa xmm11, xmm7
+            psllw xmm11, 1
+            paddw xmm10, xmm11
+
+            paddw xmm10, xmm8
+
+            # xmm11 = A + 2*B + C
+            movdqa xmm11, xmm1 
+
+            movdqa xmm12, xmm2
+            psllw xmm12, 1
+            paddw xmm11, xmm12 
+
+            paddw xmm11, xmm3
+
+            # xmm10 = GY
+            psubw xmm10, xmm11
+
+
+
+            # abs(GX)
+            movdqa xmm11, xmm0
+            pcmpgtw xmm11, xmm9
+
+            pxor xmm9, xmm11
+            psubw xmm9, xmm11
+
+            # abs(GY)
+            movdqa xmm11, xmm0 
+            pcmpgtw xmm11, xmm10
+
+            pxor xmm10, xmm11
+            psubw xmm10, xmm11
+
+            # abs(GX) + abs(GY)
+            paddw xmm9, xmm10
+
+
+
+            # if (value > 255) value = 255
+            pcmpeqw xmm11, xmm11
+            psrlw xmm11, 8
+
+            pminsw xmm9, xmm11
+
+
+            # result[y * width + x] = (unsigned char)value
+            packuswb xmm9, xmm0
+            movq qword ptr [r10 + r9], xmm9
+
+            add r9d, 8
+
+        jmp .vector_loop
+
+        .scalar_tail:
+            cmp r9d, ebx
+            jge .next_row
+
+
+
+            # gx = -a + c - 2*d + 2*f - g + i
+
+            # gx = c - a
+            movzx eax, byte ptr [rdi + r9 + 1]      # eax = c
+            mov dword ptr [rsp + 0], eax
+
+            movzx eax, byte ptr [rdi + r9 - 1]      # eax = a
+            sub dword ptr [rsp + 0], eax
+
+            # gx -= 2*d
+            movzx eax, byte ptr [rsi + r9 - 1]      # eax = d
+            add eax, eax
+            sub dword ptr [rsp + 0], eax
+
+            # gx += 2*f
+            movzx eax, byte ptr [rsi + r9 + 1]      # eax = f
+            add eax, eax
+            add dword ptr [rsp + 0], eax 
+
+            # gx -= g
+            movzx eax, byte ptr [rcx + r9 - 1]      # eax = g
+            sub dword ptr [rsp + 0], eax
+
+            # gx += i
+            movzx eax, byte ptr [rcx + r9 + 1]      # eax = i
+            add dword ptr [rsp + 0], eax
+
+
+
+            # gy = g + 2*h + i - a - 2*b - c
+
+            # gy = g
+            movzx eax, byte ptr [rcx + r9 - 1]      # eax = g
+            mov dword ptr [rsp + 4], eax
+
+            # gy += 2*h
+            movzx eax, byte ptr [rcx + r9]          # eax = h
+            add eax, eax
+            add dword ptr [rsp + 4], eax   
+
+            # gy += i
+            movzx eax, byte ptr [rcx + r9 + 1]      # eax = i
+            add dword ptr [rsp + 4], eax
+
+            # gy -= a
+            movzx eax, byte ptr [rdi + r9 - 1]      # eax = a
+            sub dword ptr [rsp + 4], eax
+
+            # gy -= 2*b
+            movzx eax, byte ptr [rdi + r9]          # eax = b
+            add eax, eax 
+            sub dword ptr [rsp + 4], eax 
+
+            # gy -= c
+            movzx eax, byte ptr [rdi + r9 + 1]      # eax = c
+            sub dword ptr [rsp + 4], eax
+
+
+
+            # value = abs(gx) + abs(gy)
+            mov eax, dword ptr [rsp + 0]
+
+            cmp eax, 0
+            jge .tail_gx_abs_done
+            neg eax
+
+            .tail_gx_abs_done:
+            mov dword ptr [rsp + 8], eax
+
+            mov eax, dword ptr [rsp + 4]
+
+            cmp eax, 0
+            jge .tail_gy_abs_done
+            neg eax
+
+            .tail_gy_abs_done:
+            add eax, dword ptr [rsp + 8] 
+
+            cmp eax, 255
+            jle .tail_value_ok
+            mov eax, 255
+            .tail_value_ok:
+            # result[y * width + x] = (unsigned char)value
+            mov byte ptr [r10 + r9], al
+
+            inc r9d
+        jmp .scalar_tail
+
+    .next_row:
+        inc r8d      
+        jmp .outer_loop
+
+    jmp .return_success
+
+
+.return_success:
+    xor eax, eax  # eax = 0
     jmp .finish
 
-.return_null:
-    xor rax, rax
+.return_error:
+    mov eax, -1   # eax = -1
+    jmp .finish
 
 .finish:
-    add rsp, 8
+    add rsp, 16
 
     pop r15
     pop r14

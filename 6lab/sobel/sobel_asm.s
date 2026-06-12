@@ -1,15 +1,15 @@
 .intel_syntax noprefix
 
 .global sobel_asm
-.extern calloc
 
 # передаем:
 # rdi = img
-# esi = width
-# edx = height
+# rsi = result
+# edx = width
+# ecx = height
 #
 # возвращаем:
-# rax = unsigned char*
+# eax = 0/-1(успех/ошибка)
 
 sobel_asm:
     push rbp
@@ -21,167 +21,218 @@ sobel_asm:
     push r14
     push r15
 
-    sub rsp, 8                 
-
-    mov rbx, rdi   # img
-    mov r12d, esi  # width
-    mov r13d, edx  # height
-
-    # if (img == NULL) return NULL;
-    test rbx, rbx
-    jz .return_null
-
-    # if (width <= 0 || height <= 0) return NULL;
-    cmp r12d, 0
-    jle .return_null
-
-    cmp r13d, 0
-    jle .return_null
-
-    # calloc(width * height, sizeof(unsigned char))
-    movsxd rax, r12d 
-    movsxd rcx, r13d 
-    imul rax, rcx 
-
-    mov rdi, rax               
-    mov esi, 1
-
-    call calloc
-
-    test rax, rax
-    jz .return_null
-
-    mov r14, rax  # r14 result
-
-    # width < 3, height < 3
-    cmp r12d, 3
-    jl .done
-
-    cmp r13d, 3
-    jl .done
-
-    # for (int y = 1; y < height - 1; y++)
-    mov r15d, 1                 # y
-
-.outer_loop:
-    mov eax, r13d
-    dec eax                     # eax = height - 1
-    cmp r15d, eax
-    jge .done
-
-    # top = img + (y - 1) * width
-    # mid = img + y * width
-    # bot = img + (y + 1) * width
-    # dst = result + y * width
-
-    movsxd rax, r15d 
-    dec rax 
-
-    movsxd rdx, r12d  
-    imul rax, rdx 
-
-    lea r8, [rbx + rax]         # r8 = top
-    mov r9, r8
-    add r9, rdx                 # r9 = mid
-
-    mov r10, r9
-    add r10, rdx                # r10 = bot
-
-    lea r11, [r14 + rax]
-    add r11, rdx                # r11 = dst
-
-    # for (int x = 1; x < width - 1; x++)
-    mov ecx, 1                  # x
-
-.inner_loop:
-    mov eax, r12d
-    dec eax 
-    cmp ecx, eax
-    jge .next_row
+    sub rsp, 72             
 
 
-    # eax = c + 2*f + i
-    movzx eax, byte ptr [r8 + rcx + 1]      # c
-    movzx esi, byte ptr [r9 + rcx + 1]      # f
-    lea eax, [eax + esi * 2]                # c + 2*f
 
-    movzx esi, byte ptr [r10 + rcx + 1]     # i
-    add eax, esi                            # c + 2*f + i
+    mov r12, rdi   # r12 = img
+    mov r13, rsi   # r13 = result
+    mov r14d, edx  # r14d = width
+    mov r15d, ecx  # r15d = height
+    mov ebx, r14d
+    dec ebx        # ebx = width - 1
+    mov edx, r15d
+    dec edx        # edx = height - 1
 
-    # esi = a + 2*d + g
-    movzx esi, byte ptr [r8 + rcx - 1]      # a
-    movzx edi, byte ptr [r9 + rcx - 1]      # d
-    lea esi, [esi + edi * 2]                # a + 2*d
-
-    movzx edi, byte ptr [r10 + rcx - 1]     # g
-    add esi, edi                            # a + 2*d + g
-
-    sub eax, esi                            # eax = gx
-
-    # abs(gx)
-    test eax, eax
-    jge .abs_x_done
-    neg eax
-
-    .abs_x_done:
-
-    mov edi, eax                            # edi = abs(gx)
+    xor eax, eax   # eax = 0
 
 
-    # edx = g + 2*h + i
-    movzx edx, byte ptr [r10 + rcx - 1]     # g
-    movzx eax, byte ptr [r10 + rcx]         # h
-    lea edx, [edx + eax * 2]                # g + 2*h
 
-    movzx eax, byte ptr [r10 + rcx + 1]     # i
-    add edx, eax                            # g + 2*h + i
+    # if (img == NULL)
+    test r12, r12
+    jz .return_error
 
-    # eax = a + 2*b + c
-    movzx eax, byte ptr [r8 + rcx - 1]      # a
-    movzx esi, byte ptr [r8 + rcx]          # b
-    lea eax, [eax + esi * 2]                # a + 2*b
+    # if (result == NULL)
+    test r13, r13
+    jz .return_error
 
-    movzx esi, byte ptr [r8 + rcx + 1]      # c
-    add eax, esi                            # a + 2*b + c
+    # if (width <= 0)
+    cmp r14d, 0
+    jle .return_error
 
-    sub edx, eax                            # edx = gy
+    # if (height <= 0)
+    cmp r15d, 0
+    jle .return_error
 
-    # abs(gy)
-    mov eax, edx                            # eax = gy
-    test eax, eax
-    jge .abs_y_done
-    neg eax
+    # if (width < 3)
+    cmp r14d, 3
+    jl .return_success
 
-    .abs_y_done:
+    # if (height < 3)
+    cmp r15d, 3
+    jl .return_success
 
-    # value = abs(gx) + abs(gy)
-    add eax, edi
 
-    # if (value > 255) value = 255;
-    cmp eax, 255
-    jle .store_pixel
 
-    mov eax, 255
+    mov r8d, 1 # y = 1
+    .outer_loop:
+        cmp r8d, edx
+        jge .return_success
 
-.store_pixel:
-    mov byte ptr [r11 + rcx], al            # result[y * width + x] = value
+        mov r9d, 1 # x = 1
+        .inner_loop:
+            cmp r9d, ebx
+            jge .next_row
 
-    inc ecx
-    jmp .inner_loop
 
-.next_row:
-    inc r15d
-    jmp .outer_loop
 
-.done:
-    mov rax, r14
+            # (y - 1) * width + x
+            mov eax, r8d        # eax = y
+            dec eax             # eax = y - 1
+            imul eax, r14d      # eax = (y - 1) * width
+            add eax, r9d        # eax = (y - 1) * width + x
+            movsxd rax, eax
+            mov qword ptr [rsp + 0], rax
+
+            # y * width + x
+            mov eax, r8d        # eax = y
+            imul eax, r14d      # eax = y * width
+            add eax, r9d        # eax = y * width + x
+            movsxd rax, eax
+            mov qword ptr [rsp + 8], rax
+
+            # (y + 1) * width + x
+            mov eax, r8d        # eax = y
+            inc eax             # eax = y + 1
+            imul eax, r14d      # eax = (y + 1) * width
+            add eax, r9d        # eax = (y + 1) * width + x
+            movsxd rax, eax
+            mov qword ptr [rsp + 16], rax
+
+
+
+            # a = img[(y - 1) * width + (x - 1)]
+            mov r10, qword ptr [rsp + 0]
+            movzx eax, byte ptr [r12 + r10 - 1]
+            mov dword ptr [rsp + 24], eax
+
+            # b = img[(y - 1) * width + x]
+            mov r10, qword ptr [rsp + 0]
+            movzx eax, byte ptr [r12 + r10]
+            mov dword ptr [rsp + 28], eax
+
+            # c = img[(y - 1) * width + (x + 1)]
+            mov r10, qword ptr [rsp + 0]
+            movzx eax, byte ptr [r12 + r10 + 1]
+            mov dword ptr [rsp + 32], eax
+
+            # d = img[y * width + (x - 1)]
+            mov r10, qword ptr [rsp + 8]
+            movzx eax, byte ptr [r12 + r10 - 1]
+            mov dword ptr [rsp + 36], eax
+
+            # f = img[y * width + (x + 1)]
+            mov r10, qword ptr [rsp + 8]
+            movzx eax, byte ptr [r12 + r10 + 1]
+            mov dword ptr [rsp + 40], eax
+
+            # g = img[(y + 1) * width + (x - 1)]
+            mov r10, qword ptr [rsp + 16]
+            movzx eax, byte ptr [r12 + r10 - 1]
+            mov dword ptr [rsp + 44], eax
+
+            # h = img[(y + 1) * width + x]
+            mov r10, qword ptr [rsp + 16]
+            movzx eax, byte ptr [r12 + r10]
+            mov dword ptr [rsp + 48], eax
+
+            # i = img[(y + 1) * width + (x + 1)]
+            mov r10, qword ptr [rsp + 16]
+            movzx eax, byte ptr [r12 + r10 + 1]
+            mov dword ptr [rsp + 52], eax
+
+
+
+            # gx = c - a - 2*d + 2*f - g + i
+            mov eax, dword ptr [rsp + 32]   # eax = c
+            sub eax, dword ptr [rsp + 24]   # eax = c - a
+
+            mov r10d, dword ptr [rsp + 36]  # r10d = d
+            add r10d, r10d                  # r10d = 2*d
+            sub eax, r10d                   # eax = c - a - 2*d
+
+            mov r10d, dword ptr [rsp + 40]  # r10d = f
+            add r10d, r10d                  # r10d = 2*f
+            add eax, r10d                   # eax = c - a - 2*d + 2*f
+
+            sub eax, dword ptr [rsp + 44]   # eax = c - a - 2*d + 2*f - g
+            add eax, dword ptr [rsp + 52]   # eax = c - a - 2*d + 2*f -g + i
+
+            mov dword ptr [rsp + 56], eax
+
+            # gy = g + 2*h + i - a - 2*b - c
+            mov eax, dword ptr [rsp + 44]   # eax = g
+
+            mov r10d, dword ptr [rsp + 48]  # r10d = h
+            add r10d, r10d                  # r10d = 2*h
+            add eax, r10d                   # eax = g + 2*h
+
+            add eax, dword ptr [rsp + 52]   # eax = g + 2*h + i
+
+            sub eax, dword ptr [rsp + 24]   # eax = g + 2*h + i - a
+
+            mov r10d, dword ptr [rsp + 28]  # r10d = b
+            add r10d, r10d                  # r10d = 2*b
+            sub eax, r10d                   # eax = g + 2*h + i - a - 2*b
+
+            sub eax, dword ptr [rsp + 32]   # eax = g + 2*h + i - a - 2*b - c
+            
+            mov dword ptr [rsp + 60], eax 
+
+
+
+            # value = abs(gx) + abs(gy)
+            mov eax, dword ptr [rsp + 56]
+            mov r10d, dword ptr [rsp + 60]
+
+            # abs(gx)
+            cmp eax, 0
+            jge .gx_abs_done
+            neg eax
+            .gx_abs_done:
+
+            # abs(gy)
+            cmp r10d, 0
+            jge .gy_abs_done
+            neg r10d
+            .gy_abs_done:
+
+            add eax, r10d
+
+
+
+            # if (value > 255) value = 255
+            cmp eax, 255
+            jle .value_ok
+            mov eax, 255
+
+
+            .value_ok:
+            # result[y * width + x] = (unsigned char)value
+            mov r10, qword ptr [rsp + 8]    # r10 = y * width + x
+            mov byte ptr [r13 + r10], al    # result[index] = value
+
+            inc r9d
+
+        jmp .inner_loop
+
+    .next_row:
+        inc r8d      
+        jmp .outer_loop
+
+    jmp .return_success
+
+
+.return_success:
+    xor eax, eax  # eax = 0
     jmp .finish
 
-.return_null:
-    xor rax, rax
+.return_error:
+    mov eax, -1   # eax = -1
+    jmp .finish
 
 .finish:
-    add rsp, 8
+    add rsp, 72
 
     pop r15
     pop r14

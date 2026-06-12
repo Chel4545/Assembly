@@ -6,11 +6,13 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image/stb_image_write.h"
 
+#include "sobel/sobel.h"
+
 
 int main(int argc, char* argv[]) {
     int width, height, channels;
 
-    if (argc != 2) {
+    if (argc != 3) {
         printf("Использование: %s input.bmp output.bmp\n", argv[0]);
         return 1;
     }
@@ -27,10 +29,44 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Получаем результат
-    unsigned char* result;
+    size_t image_size = (size_t)width * (size_t)height;
 
-    if (!stbi_write_bmp(output_file, width, height, 3, result)) {
+    // создаем результат
+    unsigned char* result = calloc(image_size, sizeof(unsigned char));
+    if (result == NULL) {
+        printf("Ошибка выделения памяти\n");
+        stbi_image_free(img);
+        return 1;
+    }
+
+    // получаем результат
+    #if USE_ASM_VECTOR == 1
+    printf("Используем ассемблер с Vector\n");
+    if (sobel_asm_vector(img, result, width, height) != 0) {
+        printf("Ошибка при обработке изображения\n");
+        free(result);
+        stbi_image_free(img);
+        return 1;
+    }
+    #elif USE_ASM == 1
+    printf("Используем ассемблер\n");
+    if (sobel_asm(img, result, width, height) != 0) {
+        printf("Ошибка при обработке изображения\n");
+        free(result);
+        stbi_image_free(img);
+        return 1;
+    }
+    #else
+    printf("Используем си\n");
+    if (sobel_c(img, result, width, height) != 0) {
+        printf("Ошибка при обработке изображения\n");
+        free(result);
+        stbi_image_free(img);
+        return 1;
+    }
+    #endif
+
+    if (!stbi_write_bmp(output_file, width, height, 1, result)) {
         printf("Ошибка при записи файла\n");
         free(result);
         stbi_image_free(img);
