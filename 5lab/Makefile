@@ -4,7 +4,9 @@ BUILD_DIR = build
 
 OPT ?= -O0
 
-CFLAGS = -Wall -Wextra -std=c11 -I. $(OPT)
+USE_ASM ?= 1
+
+CFLAGS = -Wall -Wextra -std=c11 -I. $(OPT) -DUSE_ASM=$(USE_ASM)
 LDFLAGS = -lm
 
 COMMON_OBJS = \

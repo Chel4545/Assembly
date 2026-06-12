@@ -8,8 +8,6 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image/stb_image_write.h"
 
-#define ITERATIONS 1000
-
 int main(int argc, char* argv[]) {
     int width, height, channels;
 
@@ -33,7 +31,7 @@ int main(int argc, char* argv[]) {
     }
 
     // получаем массив пикселей
-    unsigned char *img = stbi_load(input_file, &width, &height, &channels, 1);
+    unsigned char *img = stbi_load(input_file, &width, &height, &channels, 3);
     if (img == NULL) {
         printf("Ошибка при открытии файла\n");
         return 1;
@@ -57,13 +55,23 @@ int main(int argc, char* argv[]) {
     int crop_height = y_max - y_min + 1;
 
     // Получаем результат
+    #if USE_ASM == 1
+    printf("Используем ассемблер\n");
     unsigned char* result = trim_asm(img, width, crop_width, crop_height, x_min, y_min);
     if (result == NULL) {
         stbi_image_free(img);
         return 1;
     }
+    #else
+    printf("Используем си\n");
+    unsigned char* result = trim_c(img, width, crop_width, crop_height, x_min, y_min);
+    if (result == NULL) {
+        stbi_image_free(img);
+        return 1;
+    }
+    #endif
 
-    if (!stbi_write_bmp(output_file, crop_width, crop_height, 1, result)) {
+    if (!stbi_write_bmp(output_file, crop_width, crop_height, 3, result)) {
         printf("Ошибка при записи файла\n");
         free(result);
         stbi_image_free(img);

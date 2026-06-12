@@ -10,7 +10,7 @@ unsigned char* trim_c(
     int y_start
 ) {
 
-    unsigned char* result = malloc(width * height);
+    unsigned char* result = malloc(width * height * 3);
 
     if (result == NULL) {
         return NULL;
@@ -18,10 +18,12 @@ unsigned char* trim_c(
 
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
-            int src_index = (y_start + y) * orig_width + (x_start + x);
-            int dst_index = y * width + x;
+            int src_index = ((y_start + y) * orig_width + (x_start + x)) * 3;
+            int dst_index = (y * width + x) * 3;
 
-            result[dst_index] = img[src_index]; 
+            result[dst_index + 0] = img[src_index + 0]; // R
+            result[dst_index + 1] = img[src_index + 1]; // G
+            result[dst_index + 2] = img[src_index + 2]; // B
         }
     }
 

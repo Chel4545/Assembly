@@ -25,18 +25,18 @@ trim_asm:
 
     sub rsp, 24
 
-    mov rbx, rdi        # img
-    mov r12d, esi       # orig_width
-    mov r13d, edx       # width
-    mov r14d, ecx       # height
-    mov r15d, r8d       # x_start
+    mov rbx, rdi          # img
+    movsxd r12, esi       # orig_width
+    movsxd r13, edx       # width
+    movsxd r14, ecx       # height
+    movsxd r15, r8d       # x_start
     mov dword ptr [rbp - 48], r9d   # y_start
 
-    # malloc(width * height)
-    movsxd rax, r13d    # rax = width
-    movsxd r10, r14d    # r10 = height
-    imul rax, r10       # rax = width * height
-    mov rdi, rax    # rdi = width * height * 3
+    # malloc(width * height * 3)
+    mov rax, r13    # rax = width
+    imul rax, r14   # rax = width * height
+    imul rax, 3     # rax = width * height * 3
+    mov rdi, rax    
 
     call malloc
 
@@ -45,41 +45,40 @@ trim_asm:
 
     mov qword ptr [rbp - 56], rax   # сохранить result
 
-    # src_start = img + (y_start * orig_width + x_start)
+    # src_start = img + (y_start * orig_width + x_start) * 3
 
     # y_start * orig_width
     movsxd rax, dword ptr [rbp - 48]    
-    movsxd r10, r12d                 
-    imul rax, r10                       
-
-    # + x_start
-    movsxd r10, r15d                    
-    add rax, r10    
+    imul rax, r12
+    add rax, r15                          
+    imul rax, 3
 
     lea r8, [rbx + rax]               
 
     # ptr res
     mov r9, qword ptr [rbp - 56]
 
-    # src_row_bytes = orig_width
-    movsxd r10, r12d
+    # src_row_bytes = orig_width * 3
+    mov r10, r12
+    imul r10, 3
 
     # dst_row_bytes = width * 3
-    movsxd r11, r13d
+    mov r11, r13
+    imul r11, 3
 
-    xor ecx, ecx        # y = 0
+    xor rcx, rcx        # y = 0
 
 .outer_loop:
-    cmp ecx, r14d  # столбец
+    cmp rcx, r14  # столбец
     jge .done
 
     mov rdi, r8
     mov rsi, r9
 
-    xor edx, edx
+    xor rdx, rdx
 
 .inner_loop:
-    cmp edx, r13d  # строка
+    cmp rdx, r11  # строка
     jge .next_row
 
     mov al, byte ptr [rdi]
@@ -87,15 +86,15 @@ trim_asm:
 
     inc rdi
     inc rsi
+    inc rdx
 
-    inc edx
     jmp .inner_loop
 
 .next_row:
-    add r8, r10         # orig_width * 3
-    add r9, r11         # width * 3
+    add r8, r10         # orig_width
+    add r9, r11         # width
 
-    inc ecx
+    inc rcx
     jmp .outer_loop
 
 .done:
